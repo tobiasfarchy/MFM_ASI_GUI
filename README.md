@@ -1,6 +1,6 @@
 # MFM_ASI_GUI
 
-## Packages to install: Packages to install: puzzlepiece, numpy, pyqtgraph, opencv-python, scipy, PyQt5
+## Packages to install: puzzlepiece, numpy, pyqtgraph, opencv-python, scipy, PyQt5
 
 Current version:
 - Takes AFM/MFM .txt scan pairs (pre-processed in Gwyddion) -- follow naming convension (file_name_AFM.txt and file_name_MFM.txt)
