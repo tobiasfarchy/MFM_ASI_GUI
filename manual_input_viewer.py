@@ -16,8 +16,8 @@ import pyqtgraph as pg
 from functools import partial as fpartial
 from cv2 import getRotationMatrix2D, warpAffine
 from scipy.signal import find_peaks
-from PyQt5.QtWidgets import QApplication, QFileDialog, QComboBox, QGraphicsProxyWidget
-from PyQt5.QtGui import QBrush, QColor
+from PyQt5.QtWidgets import QApplication, QFileDialog, QComboBox, QGraphicsProxyWidget, QGraphicsRectItem
+from PyQt5.QtGui import QBrush, QColor, QPainter
 from PyQt5.QtCore import QRectF, Qt
 
 combo_colors = ['darkRed','darkBlue', 'darkGreen', 'darkYellow', 'black']
@@ -39,12 +39,25 @@ def clean_peaks(data_raw, quant = 0.8, dist: int = 8):
     peak_i, peak_h = find_peaks(data, height = (np.quantile(data, quant), np.max(data) + 1.), distance = dist)
     return peak_i
 
+class RectItem(QGraphicsRectItem):
+    def paint(self, painter, option, widget=None):
+        super(RectItem, self).paint(painter, option, widget)
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setBrush(Qt.darkRed)
+        painter.drawRect(option.rect)
+        painter.restore()
+
+
+
 class ModeView(fv.FileView):
     def define_params(self):
         rot = pzp.param.spinbox(self, "Rotation", 0.0)(None)
         filename = pzp.param.text(self, "Filename", 'Placeholder')(None)
         default_satx = pzp.param.spinbox(self, "Default x-bar saturation: → = 0 or ← = 1", 0)(None) 
         default_saty = pzp.param.spinbox(self, "Default y-bar saturation: ↑ = 0 or ↓ = 1", 0)(None)
+        # vertex_posx = pzp.param.spinbox(self, "Vertex pos x", 0.0)(None)
+        # vertex_posy = pzp.param.spinbox(self, "Vertex pos y", 0.0)(None)
         rot.changed.connect(self.rot_image)
         pzp.param.readout(self, 'Latest error')(None)
         self.rect = None
@@ -242,7 +255,7 @@ class ModeView(fv.FileView):
             print("Error: No existing checkerboard")
         
     
-    def populate_checkerboard(self, rows, cols, image_size, mult = (10, 4)):
+    def populate_checkerboard(self, rows, cols, image_size, mult = (5, 2)):
         multx, multy = mult
         cols = 2*cols-1
         rows = 2*rows-1
@@ -256,6 +269,16 @@ class ModeView(fv.FileView):
         for i in range(rows):
             combos = []
             for j in range(cols):
+                # Add vertices boxes
+                if i%2 == 0 and j%2 == 0:
+                    # print('hello')
+                    pos = ((cols - j - 1)*size_x, (rows - i - 1)*size_y)
+                    # pos = ((cols - j - 1)*size_x, (rows - i - 1)*size_y)
+                    # box = QGraphicsRectItem(multx*pos[0], multy*pos[1], multx*size_x, multy*size_y)
+                    box = RectItem(QRectF(multx*pos[0], multy*pos[1], multx*size_x, multy*size_y))
+                    # box.setBrush(QBrush(QColor('blue')))
+                    self.scene.addItem(box)
+                
                 if (i+j) % 2 == 1:
                     # Add ComboBox in a proxy widget
                     combo = QComboBox()
@@ -280,11 +303,11 @@ class ModeView(fv.FileView):
                     proxy.setPos(multx*pos[0], multy*pos[1])
                     self.scene.addItem(proxy)
                     combo.highlighted.connect(fpartial(self.highlight_MFM, pos, orientation))
-                    combo.currentIndexChanged.connect(fpartial(self.combo_color, combo))
+                    # combo.currentIndexChanged.connect(fpartial(self.combo_color, combo))
                     combos.append(combo)
             self.combos.append(combos)
                     
-        self.scene.setSceneRect(self.origin[0], self.origin[1], cols * iround(multx*size_x), rows * iround(multy*size_y)) # Change this for centering
+        # self.scene.setSceneRect(self.origin[0], self.origin[1], cols * iround(multx*size_x), rows * iround(multy*size_y)) # Change this for centering
 
         self.multx = multx
         self.multy = multy
