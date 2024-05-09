@@ -24,6 +24,9 @@ def save_config_helper(bars, filename):
     np.save(filename + '_xbars.npy', np.array(bars[0]), allow_pickle = False)
     np.save(filename + '_ybars.npy', np.array(bars[1]), allow_pickle = False)
 
+def save_config_helper_csv(bars, filename):
+    np.savetxt(filename + '_config.csv', bars, delimiter=',', fmt='%s')
+
 def iround(num):
     return int(np.round(num))
 
@@ -36,9 +39,10 @@ def clean_peaks(data_raw, quant = 0.8, dist: int = 8):
 
 class ModeView(fv.FileView):
     def define_params(self):
-        rot = pzp.param.spinbox(self, "Rotation", 0)(None)
-        x_stretch = pzp.param.spinbox(self, "x_stretch", 0)(None)
-        y_stretch = pzp.param.spinbox(self, "y_stretch", 0)(None)
+        rot = pzp.param.spinbox(self, "Rotation", 0.0)(None)
+        filename = pzp.param.text(self, "Filename", 'Placeholder')(None)
+        default_satx = pzp.param.spinbox(self, "Default x-bar saturation: → = 0 or ← = 1", 0)(None) 
+        default_saty = pzp.param.spinbox(self, "Default y-bar saturation: ↑ = 0 or ↓ = 1", 0)(None)
         rot.changed.connect(self.rot_image)
         pzp.param.readout(self, 'Latest error')(None)
         self.rect = None
@@ -64,35 +68,55 @@ class ModeView(fv.FileView):
         @pzp.action.define(self, "Default mag")
         def default_checkerboard(self):
             if len(self.combos) > 0:
-                for combo_lst in self.combos:
+                for i, combo_lst in enumerate(self.combos):
+                    if i%2 == 0: # xbars
+                        default_val = self.params["Default x-bar saturation: → = 0 or ← = 1"].value
+                    else: # ybars
+                        default_val = self.params["Default y-bar saturation: ↑ = 0 or ↓ = 1"].value
                     for combo in combo_lst:
-                        combo.setCurrentIndex(0)
+                        combo.setCurrentIndex(default_val)
             else:
                 self.params['Latest error'].set_value('Generate checkerboard first')
         
         @pzp.action.define(self, "Save Configuration ")
         def save_config(self):
             if len(self.combos) > 0:
-                xbars = []
-                ybars = []
-                i = 0
-                for combo_lst in self.combos:
-                    bars_lst = []
-                    for combo in combo_lst:
-                        bars_lst.append(combo.currentIndex())
-                    if i%2 == 0:
-                        xbars.append(bars_lst)
-                    else:
-                        ybars.append(bars_lst)
-                    i += 1
+                # xbars = []
+                # ybars = []
+                # i = 0
+                # for combo_lst in self.combos:
+                #     bars_lst = []
+                #     for combo in combo_lst:
+                #         bars_lst.append(combo.currentIndex())
+                #     if i%2 == 0:
+                #         xbars.append(bars_lst)
+                #     else:
+                #         ybars.append(bars_lst)
+                #     i += 1
+                empty_val = None
+                all_bars = np.zeros((len(self.combos), len(self.combos[0])*2 + 1))
+                for i, combo_lst in enumerate(self.combos):
+                    if i%2 == 0: # xbars
+                        all_bars[i, 0] = empty_val
+                        for j, combo in enumerate(combo_lst):
+                            all_bars[i, 2*(j+1) - 1] = combo.currentIndex()
+                            all_bars[i, 2*(j+1)] = empty_val # Add empty space for vertex
+                    else: # ybars
+                        all_bars[i, 0] = combo_lst[0].currentIndex() + 0.5 # 0.5 to mark ybars vs xbars
+                        for j, combo in enumerate(combo_lst[1:]):
+                            all_bars[i, 2*(j+1) - 1] = empty_val # Empty space for vertex
+                            all_bars[i, 2*(j+1)] = combo.currentIndex() + 0.5 # 0.5 to mark ybars vs xbars
+
             else:
                 self.params['Latest error'].set_value('Generate checkerboard first')
 
             # if 'saved_scans' not in os.listdir(os.getcwd()):
             #     os.mkdir(os.getcwd() + '//saved_scans')
-            fname = (self.filename[:-len("_MFM.txt")] +
+            fname = (self.params['Filename'].value +
                   f"_rot{self.params['Rotation'].value}")
-            save_config_helper((xbars, ybars), fname)
+            # save_config_helper((xbars, ybars), fname)
+            np.savetxt(fname + '_config.csv', np.flip(np.flip(all_bars, axis=0), axis =1), delimiter=',', fmt='%s')
+
 
         @pzp.action.define(self, "Load Configuration")
         def load_config(self):
@@ -168,6 +192,8 @@ class ModeView(fv.FileView):
             filename = filename[1:]
             self.filename = filename
 
+        self.params['Filename'].set_value(filename[:-len("_MFM.txt")])
+
         # Load images 
         self.img_AFM = np.loadtxt(filename[:-len("MFM.txt")] + 'AFM.txt')
         self.img_MFM = np.loadtxt(filename[:-len("MFM.txt")] + 'MFM.txt')
@@ -218,8 +244,8 @@ class ModeView(fv.FileView):
         cols = 2*cols-1
         rows = 2*rows-1
         
-        size_x, size_y = (image_size[0]/(cols - 1 + self.params['x_stretch'].value/10), 
-                          image_size[1]/(rows - 1 + self.params['y_stretch'].value/10))
+        size_x, size_y = (image_size[0]/(cols - 1), 
+                          image_size[1]/(rows - 1))
         # print('sizes', size_x, size_y)
         self.scene.clear()
         self.scene.setBackgroundBrush(QBrush(QColor(128, 128, 128)))
@@ -232,7 +258,7 @@ class ModeView(fv.FileView):
                     combo = QComboBox()
 
                     if i%2 == 0:
-                        combo.addItems(['→', '←','↷','↶','U'])
+                        combo.addItems(['→', '←','↷','↶','U']) # ['↑', '↓', '↷','↶','U']
                         orientation = 0
                     else:
                         combo.addItems(['↑', '↓', '↷','↶','U'])
