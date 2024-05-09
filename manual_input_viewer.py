@@ -18,7 +18,9 @@ from cv2 import getRotationMatrix2D, warpAffine
 from scipy.signal import find_peaks
 from PyQt5.QtWidgets import QApplication, QFileDialog, QComboBox, QGraphicsProxyWidget
 from PyQt5.QtGui import QBrush, QColor
-from PyQt5.QtCore import QRectF
+from PyQt5.QtCore import QRectF, Qt
+
+combo_colors = ['darkRed','darkBlue', 'darkGreen', 'darkYellow', 'black']
 
 def save_config_helper(bars, filename):
     np.save(filename + '_xbars.npy', np.array(bars[0]), allow_pickle = False)
@@ -231,16 +233,17 @@ class ModeView(fv.FileView):
             yrange = self.iv1.getView().viewRange()[1]
     
             # Set the same range to GraphicsView
-            self.view.setRange(QRectF(self.mult*(xrange[0] - self.origin[0]), 
-                                      self.mult*(yrange[0] - self.origin[1]), 
-                                      int(self.mult*(xrange[1]-xrange[0])), 
-                                      int(self.mult*(yrange[1]-yrange[0]))), 
+            self.view.setRange(QRectF(self.multx*(xrange[0] - self.origin[0]), 
+                                      self.multy*(yrange[0] - self.origin[1]), 
+                                      int(self.multx*(xrange[1]-xrange[0])), 
+                                      int(self.multy*(yrange[1]-yrange[0]))), 
                                       padding=0)
         else:
             print("Error: No existing checkerboard")
         
     
-    def populate_checkerboard(self, rows, cols, image_size, mult = 5):
+    def populate_checkerboard(self, rows, cols, image_size, mult = (10, 4)):
+        multx, multy = mult
         cols = 2*cols-1
         rows = 2*rows-1
         
@@ -256,6 +259,8 @@ class ModeView(fv.FileView):
                 if (i+j) % 2 == 1:
                     # Add ComboBox in a proxy widget
                     combo = QComboBox()
+                    # combo.setEditable(True) 
+                    # model = combo.model()
 
                     if i%2 == 0:
                         combo.addItems(['→', '←','↷','↶','U']) # ['↑', '↓', '↷','↶','U']
@@ -264,20 +269,25 @@ class ModeView(fv.FileView):
                         combo.addItems(['↑', '↓', '↷','↶','U'])
                         orientation = 1
                     
+                    # for row, color in enumerate(combo_colors):
+                    #     model.setData(model.index(row, 0), QColor(color), Qt.BackgroundRole)
+
                     combo.setFrame(False)
                     proxy = QGraphicsProxyWidget()
                     proxy.setWidget(combo)
 
                     pos = ((cols - j - 1)*size_x, (rows - i - 1)*size_y) # doesn't hit cols, rows
-                    proxy.setPos(mult*pos[0], mult*pos[1])
+                    proxy.setPos(multx*pos[0], multy*pos[1])
                     self.scene.addItem(proxy)
                     combo.highlighted.connect(fpartial(self.highlight_MFM, pos, orientation))
+                    combo.currentIndexChanged.connect(fpartial(self.combo_color, combo))
                     combos.append(combo)
             self.combos.append(combos)
                     
-        self.scene.setSceneRect(self.origin[0], self.origin[1], cols * iround(mult*size_x), rows * iround(mult*size_y)) # Change this for centering
+        self.scene.setSceneRect(self.origin[0], self.origin[1], cols * iround(multx*size_x), rows * iround(multy*size_y)) # Change this for centering
 
-        self.mult = mult
+        self.multx = multx
+        self.multy = multy
         self.iv1.getView().sigXRangeChanged.connect(self.updateGraphicsView)
         self.iv1.getView().sigYRangeChanged.connect(self.updateGraphicsView)
 
@@ -287,7 +297,8 @@ class ModeView(fv.FileView):
         self.params['Latest error'].set_value(f'highlighting working:{pos}')
         view = self.iv2.getView()
         if self.rect is not None:
-            view.removeItem(self.rect)
+            # view.removeItem(self.rect)
+            self.rect.setPen('r')
         
         if orientation == 0:
             self.rect = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/2, self.origin[1] + pos[1] - self.bar_width/8], 
@@ -296,6 +307,14 @@ class ModeView(fv.FileView):
             self.rect = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/8, self.origin[1]+ pos[1] - self.bar_width/2],
                               [self.bar_width/4, self.bar_width], pen='b')
         view.addItem(self.rect)
+
+    # def combo_color(self, combo):
+    #     # Get the current text of the combobox to set the color accordingly
+    #     pal = combo.palette()
+    #     pal.setColor(combo.foregroundRole(), QColor(combo_colors[combo.currentIndex()]))
+    #     combo.setPalette(pal)
+    #     # color = combo_colors[combo.currentIndex()]
+    #     # combo.setStyleSheet(f"QComboBox {{ background-color: {color}; }}")
 
 
 def main():
