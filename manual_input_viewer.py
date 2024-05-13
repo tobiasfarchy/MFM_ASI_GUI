@@ -19,7 +19,7 @@ from scipy.signal import find_peaks
 from PyQt5.QtWidgets import QApplication, QFileDialog, QComboBox, QGraphicsProxyWidget, QGraphicsRectItem
 from PyQt5.QtGui import QBrush, QColor, QPainter
 from PyQt5.QtCore import QRectF, Qt
-from copy import deepcopy
+from MFM_read_toolkit import square_lattice_bars
 
 combo_colors = ['darkRed','darkBlue', 'darkGreen', 'darkYellow', 'black']
 
@@ -319,14 +319,13 @@ class ScanView(fv.FileView):
         
         size_x, size_y = (image_size[0]/(cols - 1), 
                           image_size[1]/(rows - 1))
-        # print('sizes', size_x, size_y)
+
         self.scene.clear()
         self.scene.setBackgroundBrush(QBrush(QColor(128, 128, 128)))
         mfm_view = self.iv2.getView()
 
         self.combos = []
         self.mfm_boxes = []
-        index = [0, 0]
         for i in range(rows):
             combos = []
             boxes = []
@@ -335,30 +334,19 @@ class ScanView(fv.FileView):
                 j_ = 0
                 # Add vertices boxes
                 if i%2 == 0 and j%2 == 0:
-                    # print('hello')
                     pos = ((cols - j - 1)*size_x, (rows - i - 1)*size_y)
-                    # pos = ((cols - j - 1)*size_x, (rows - i - 1)*size_y)
-                    # box = QGraphicsRectItem(multx*pos[0], multy*pos[1], multx*size_x, multy*size_y)
                     box = RectItem(QRectF(self.multx*pos[0], self.multy*pos[1], self.multx*size_x, self.multy*size_y))
-                    # box.setBrush(QBrush(QColor('blue')))
                     self.scene.addItem(box)
                 
                 if (i+j) % 2 == 1:
                     # Add ComboBox in a proxy widget
                     combo = QComboBox()
-                    # combo.setEditable(True) 
-                    # model = combo.model()
 
                     if i%2 == 0:
                         combo.addItems(['→', '←','↷','↶','U']) # ['↑', '↓', '↷','↶','U']
-                        # orientation = 0
                     else:
                         combo.addItems(['↑', '↓', '↷','↶','U'])
-                        # orientation = 1
                     
-                    # for row, color in enumerate(combo_colors):
-                    #     model.setData(model.index(row, 0), QColor(color), Qt.BackgroundRole)
-
                     combo.setFrame(False)
                     proxy = QGraphicsProxyWidget()
                     proxy.setWidget(combo)
@@ -380,11 +368,8 @@ class ScanView(fv.FileView):
                     mfm_view.addItem(box)
 
                     index = (i_, j_)
-                    # index = ((cols - j - 1)*size_x, (rows - i - 1)*size_y)
                     box.sigClicked.connect(fpartial(self.highlight_combo, combo)) # hover event too?
                     combo.highlighted.connect(fpartial(self.highlight_mfm_box, box))
-                    # combo.highlighted.connect(fpartial(self.highlight_MFM, pos, orientation))
-                    # combo.currentIndexChanged.connect(fpartial(self.combo_color, combo))
                     combos.append([combo, pos])
                     boxes.append(box)
                     j_ += 1
@@ -392,20 +377,11 @@ class ScanView(fv.FileView):
             self.combos.append(combos)
             self.mfm_boxes.append(boxes)
                     
-        # self.scene.setSceneRect(self.origin[0], self.origin[1], cols * iround(multx*size_x), rows * iround(multy*size_y)) # Change this for centering
-
-        # self.iv2.getView().sigXRangeChanged.connect(self.updateGraphicsView)
-        # self.iv2.getView().sigYRangeChanged.connect(self.updateGraphicsView)
-
     def show_all_bars(self):
         """ 
         Manages the implementation of the 'MFM bar boxes' checkbox.
         Sets all bar boxes in bottom left MFM plot to visible and resets their colour to default (blue).
         """
-        # if self.params['MFM bar boxes'].value == True:
-        #     for boxes in self.iv2.getView().allChildren():
-        #         boxes.setPen('b')
-        #         boxes.setVisible(self.params['MFM bar boxes'].value)
         if self.mfm_boxes is not None:
             for box in [box for box_lst in self.mfm_boxes for box in box_lst]:
                 box.setPen('b')
@@ -421,7 +397,6 @@ class ScanView(fv.FileView):
         """
 
         if self.pre_box is not None:
-            # view.removeItem(self.rect)
             self.pre_box.setPen('r')
         self.pre_box = box
 
@@ -440,52 +415,6 @@ class ScanView(fv.FileView):
         self.pre_combo = combo
         combo.showPopup()
 
-
-    # def highlight_MFM(self, pos, orientation):
-    #     # Adding a rectangle into MFM image to highlight the bar being selected in the manual input window
-    #     self.params['Latest error'].set_value(f'highlighting working:{pos}')
-    #     view = self.iv2.getView()
-    #     if self.rect is not None:
-    #         # view.removeItem(self.rect)
-    #         self.rect.setPen('r')
-        
-    #     if orientation == 0:
-    #         self.rect = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/2, self.origin[1] + pos[1] - self.bar_width/8], 
-    #                           [self.bar_width, self.bar_width/4], pen='b')
-    #     else:
-    #         self.rect = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/8, self.origin[1]+ pos[1] - self.bar_width/2],
-    #                           [self.bar_width/4, self.bar_width], pen='b')
-    #     view.addItem(self.rect)
-
-
-    # def highlight_MFM(self, index):
-    #     # Adding a rectangle into MFM image to highlight the bar being selected in the manual input window
-    #     # turn visibility to true
-    #     # change colour from default
-    #     # if one was previously selected, turn its colour to another
-    #     pos = self.combos[index[0]][index[1]][1]
-    #     self.params['Latest error'].set_value(f'highlighting working:{pos}')
-    #     view = self.iv2.getView()
-    #     if self.rect is not None:
-    #         # view.removeItem(self.rect)
-    #         self.rect.setPen('r')
-        
-    #     if index[0]%2 == 0:
-    #         self.rect = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/2, self.origin[1] + pos[1] - self.bar_width/8], 
-    #                           [self.bar_width, self.bar_width/4], pen='b')
-    #     else:
-    #         self.rect = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/8, self.origin[1]+ pos[1] - self.bar_width/2],
-    #                           [self.bar_width/4, self.bar_width], pen='b')
-    #     view.addItem(self.rect)
-
-
-    # def combo_color(self, combo):
-    #     # Get the current text of the combobox to set the color accordingly
-    #     pal = combo.palette()
-    #     pal.setColor(combo.foregroundRole(), QColor(combo_colors[combo.currentIndex()]))
-    #     combo.setPalette(pal)
-    #     # color = combo_colors[combo.currentIndex()]
-    #     # combo.setStyleSheet(f"QComboBox {{ background-color: {color}; }}")
 
 
 def main():
