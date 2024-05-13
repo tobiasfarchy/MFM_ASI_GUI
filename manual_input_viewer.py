@@ -368,13 +368,10 @@ class ScanView(fv.FileView):
                     box.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
                     mfm_view.addItem(box)
 
-                    index = (i_, j_)
                     box.sigClicked.connect(fpartial(self.highlight_combo, combo)) # hover event too?
                     combo.highlighted.connect(fpartial(self.highlight_mfm_box, box))
                     combos.append([combo, pos])
                     boxes.append(box)
-                    j_ += 1
-            i_ += 1
             self.combos.append(combos)
             self.mfm_boxes.append(boxes)
                     
