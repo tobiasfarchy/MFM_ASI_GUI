@@ -2,7 +2,7 @@
 """
 @author: tfarchy
 
-Packages to install: puzzlepiece, numpy, pyqtgraph, opencv-python, scipy, PyQt5
+Packages to install: puzzlepiece, numpy, pyqtgraph, opencv-python, scipy, PyQt5, matplotlib
 """
 
 import file_viewer as fv
@@ -19,6 +19,7 @@ from scipy.signal import find_peaks
 from PyQt5.QtWidgets import QApplication, QFileDialog, QComboBox, QGraphicsProxyWidget, QGraphicsRectItem
 from PyQt5.QtGui import QBrush, QColor, QPainter
 from PyQt5.QtCore import QRectF, Qt
+from copy import deepcopy
 
 combo_colors = ['darkRed','darkBlue', 'darkGreen', 'darkYellow', 'black']
 
@@ -50,17 +51,26 @@ class RectItem(QGraphicsRectItem):
 
 
 
-class ModeView(fv.FileView):
+class ScanView(fv.FileView):
     def define_params(self):
         rot = pzp.param.spinbox(self, "Rotation", 0.0)(None)
         filename = pzp.param.text(self, "Filename", 'Placeholder')(None)
         default_satx = pzp.param.spinbox(self, "Default x-bar saturation: → = 0 or ← = 1", 0)(None) 
         default_saty = pzp.param.spinbox(self, "Default y-bar saturation: ↑ = 0 or ↓ = 1", 0)(None)
+        view_link = pzp.param.checkbox(self, "AFM MFM axis link", True)(None)
+        mfm_boxes = pzp.param.checkbox(self, "MFM bar boxes", False)(None)
         # vertex_posx = pzp.param.spinbox(self, "Vertex pos x", 0.0)(None)
         # vertex_posy = pzp.param.spinbox(self, "Vertex pos y", 0.0)(None)
         rot.changed.connect(self.rot_image)
+        view_link.changed.connect(self.image_view_link)
+        mfm_boxes.changed.connect(self.show_all_bars)
         pzp.param.readout(self, 'Latest error')(None)
-        self.rect = None
+        # self.rect = None
+        self.pre_box = None # previously seleted bar box stored here
+        self.mfm_view = None # MFM window ROI stored here
+        self.multx, self.multy = 5, 2
+        self.combos = None # QComboBoxes stored here
+        self.mfm_boxes = None # MFM bar boxes stored here
 
     def define_actions(self):
         @pzp.action.define(self, "Generate ASI Input")
@@ -152,7 +162,6 @@ class ModeView(fv.FileView):
                     for j in range(len(xbars[0])):
                         self.combos[-1][j].setCurrentIndex(xbars[-1][j])
             
-    
     def custom_layout(self):
         main_layout = pg.QtWidgets.QGridLayout()
         
@@ -192,10 +201,14 @@ class ModeView(fv.FileView):
         
 
         # Set up Graphics View
-        self.view = view = pg.GraphicsView()
+        self.graphics_view = graphics_view = pg.GraphicsView()
         self.scene = pg.GraphicsScene()
-        view.setScene(self.scene)
-        layout.addWidget(view, 0, 1, 2, 1)
+        graphics_view.setScene(self.scene)
+        layout.addWidget(graphics_view, 0, 1, 2, 1)
+
+        # Set MFM plot to change views of everything linked to it
+        iv2.getView().sigXRangeChanged.connect(self.updateGraphicsView)
+        iv2.getView().sigYRangeChanged.connect(self.updateGraphicsView)
         
         return main_layout
 
@@ -220,7 +233,6 @@ class ModeView(fv.FileView):
         # Rotate images
         self.rot_image()
 
-
     def rot_image(self):
         """Rotate AFM and MFM images"""
         height, width = self.img_AFM.shape[:2]
@@ -237,26 +249,71 @@ class ModeView(fv.FileView):
         self.iv1.setImage(self.rot_AFM.T)
         self.iv2.setImage(self.rot_MFM.T)
 
-    
     def updateGraphicsView(self):
+        """
+        This method manages the linking of bottom left MFM plot with the view of the right checkerboard.
+        Only used after the checkerboard has been initialised in function ScanView.populate_checkerboard. 
+        """
         # Get the current view range from ImageView
+        xrange, yrange = self.iv2.getView().viewRange()
+
         item = self.grid.itemAtPosition(0, 1)
-        if item is not None:
-            xrange = self.iv1.getView().viewRange()[0]
-            yrange = self.iv1.getView().viewRange()[1]
-    
+        if self.combos is not None:
             # Set the same range to GraphicsView
-            self.view.setRange(QRectF(self.multx*(xrange[0] - self.origin[0]), 
-                                      self.multy*(yrange[0] - self.origin[1]), 
-                                      int(self.multx*(xrange[1]-xrange[0])), 
-                                      int(self.multy*(yrange[1]-yrange[0]))), 
-                                      padding=0)
+            self.graphics_view.setRange(QRectF(self.multx*(xrange[0] - self.origin[0]), 
+                                        self.multy*(yrange[0] - self.origin[1]), 
+                                        int(self.multx*(xrange[1]-xrange[0])), 
+                                        int(self.multy*(yrange[1]-yrange[0]))), 
+                                        padding=0)
+            
+            if self.params['AFM MFM axis link'].value == False:
+                self.updateMFMView(xrange, yrange)
+        # else:
+        #     print("Error: No existing checkerboard")
+
+        if self.params['AFM MFM axis link'].value == False:
+            self.updateMFMView(xrange, yrange)
+
+    def image_view_link(self):
+        """ 
+        This method manages the implementation of the 'AFM MFM axis link' checkbox.
+        Either axes are linked or only MFM scrolls with the MFM view shown as a rectangular ROI in the AFM plot
+        """
+
+        viewbox2 = self.iv2.getView()
+        viewbox1 = self.iv1.getView() # change these
+        if self.params['AFM MFM axis link'].value == True:
+            viewbox2.setYLink(viewbox1)
+            viewbox2.setXLink(viewbox1)
+            if self.mfm_view is not None:
+                viewbox1.removeItem(self.mfm_view)
+
         else:
-            print("Error: No existing checkerboard")
+            viewbox2.setYLink(None)
+            viewbox2.setXLink(None)
+            viewbox1.autoRange()
+            xrange, yrange = viewbox2.viewRange()
+            self.updateMFMView(xrange, yrange)
+
+    def updateMFMView(self, xrange, yrange):
+        """ 
+        This method updates the rectangular ROI in the top left AFM plot according to the viewing range of the bottom left MFM plot.
+        Only used if 'AFM MFM axis link' is set to False
+        """
+
+        viewbox1 = self.iv1.getView()
+        if self.mfm_view is not None:
+            viewbox1.removeItem(self.mfm_view)
+        self.mfm_view = pg.RectROI([xrange[0], yrange[0]],
+                                    [xrange[1] - xrange[0], yrange[1] - yrange[0]],
+                                    pen='w')
+        viewbox1.addItem(self.mfm_view)
         
-    
-    def populate_checkerboard(self, rows, cols, image_size, mult = (5, 2)):
-        multx, multy = mult
+    def populate_checkerboard(self, rows, cols, image_size):
+        """
+        This method populated the checkerboard on the right side of the windows and adds corresponding rectangles to bottom left MFM plot.
+        """
+
         cols = 2*cols-1
         rows = 2*rows-1
         
@@ -265,17 +322,24 @@ class ModeView(fv.FileView):
         # print('sizes', size_x, size_y)
         self.scene.clear()
         self.scene.setBackgroundBrush(QBrush(QColor(128, 128, 128)))
+        mfm_view = self.iv2.getView()
+
         self.combos = []
+        self.mfm_boxes = []
+        index = [0, 0]
         for i in range(rows):
             combos = []
+            boxes = []
+            i_ = 0
             for j in range(cols):
+                j_ = 0
                 # Add vertices boxes
                 if i%2 == 0 and j%2 == 0:
                     # print('hello')
                     pos = ((cols - j - 1)*size_x, (rows - i - 1)*size_y)
                     # pos = ((cols - j - 1)*size_x, (rows - i - 1)*size_y)
                     # box = QGraphicsRectItem(multx*pos[0], multy*pos[1], multx*size_x, multy*size_y)
-                    box = RectItem(QRectF(multx*pos[0], multy*pos[1], multx*size_x, multy*size_y))
+                    box = RectItem(QRectF(self.multx*pos[0], self.multy*pos[1], self.multx*size_x, self.multy*size_y))
                     # box.setBrush(QBrush(QColor('blue')))
                     self.scene.addItem(box)
                 
@@ -287,10 +351,10 @@ class ModeView(fv.FileView):
 
                     if i%2 == 0:
                         combo.addItems(['→', '←','↷','↶','U']) # ['↑', '↓', '↷','↶','U']
-                        orientation = 0
+                        # orientation = 0
                     else:
                         combo.addItems(['↑', '↓', '↷','↶','U'])
-                        orientation = 1
+                        # orientation = 1
                     
                     # for row, color in enumerate(combo_colors):
                     #     model.setData(model.index(row, 0), QColor(color), Qt.BackgroundRole)
@@ -300,36 +364,120 @@ class ModeView(fv.FileView):
                     proxy.setWidget(combo)
 
                     pos = ((cols - j - 1)*size_x, (rows - i - 1)*size_y) # doesn't hit cols, rows
-                    proxy.setPos(multx*pos[0], multy*pos[1])
+                    proxy.setPos(self.multx*pos[0], self.multy*pos[1])
                     self.scene.addItem(proxy)
-                    combo.highlighted.connect(fpartial(self.highlight_MFM, pos, orientation))
+
+                    if i%2 == 0:
+                        box = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/2, self.origin[1] + pos[1] - self.bar_width/8],
+                                               [self.bar_width, self.bar_width/4],
+                                               pen='b')
+                    else:
+                        box = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/8, self.origin[1]+ pos[1] - self.bar_width/2],
+                                               [self.bar_width/4, self.bar_width],
+                                               pen='b')
+                    box.setVisible(False)
+                    box.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
+                    mfm_view.addItem(box)
+
+                    index = (i_, j_)
+                    # index = ((cols - j - 1)*size_x, (rows - i - 1)*size_y)
+                    box.sigClicked.connect(fpartial(self.highlight_combo, combo)) # hover event too?
+                    combo.highlighted.connect(fpartial(self.highlight_mfm_box, box))
+                    # combo.highlighted.connect(fpartial(self.highlight_MFM, pos, orientation))
                     # combo.currentIndexChanged.connect(fpartial(self.combo_color, combo))
-                    combos.append(combo)
+                    combos.append([combo, pos])
+                    boxes.append(box)
+                    j_ += 1
+            i_ += 1
             self.combos.append(combos)
+            self.mfm_boxes.append(boxes)
                     
         # self.scene.setSceneRect(self.origin[0], self.origin[1], cols * iround(multx*size_x), rows * iround(multy*size_y)) # Change this for centering
 
-        self.multx = multx
-        self.multy = multy
-        self.iv1.getView().sigXRangeChanged.connect(self.updateGraphicsView)
-        self.iv1.getView().sigYRangeChanged.connect(self.updateGraphicsView)
+        # self.iv2.getView().sigXRangeChanged.connect(self.updateGraphicsView)
+        # self.iv2.getView().sigYRangeChanged.connect(self.updateGraphicsView)
 
-
-    def highlight_MFM(self, pos, orientation):
-        # Adding a rectangle into MFM image to highlight the bar being selected in the manual input window
-        self.params['Latest error'].set_value(f'highlighting working:{pos}')
-        view = self.iv2.getView()
-        if self.rect is not None:
-            # view.removeItem(self.rect)
-            self.rect.setPen('r')
-        
-        if orientation == 0:
-            self.rect = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/2, self.origin[1] + pos[1] - self.bar_width/8], 
-                              [self.bar_width, self.bar_width/4], pen='b')
+    def show_all_bars(self):
+        """ 
+        Manages the implementation of the 'MFM bar boxes' checkbox.
+        Sets all bar boxes in bottom left MFM plot to visible and resets their colour to default (blue).
+        """
+        # if self.params['MFM bar boxes'].value == True:
+        #     for boxes in self.iv2.getView().allChildren():
+        #         boxes.setPen('b')
+        #         boxes.setVisible(self.params['MFM bar boxes'].value)
+        if self.mfm_boxes is not None:
+            for box in [box for box_lst in self.mfm_boxes for box in box_lst]:
+                box.setPen('b')
+                box.setVisible(self.params['MFM bar boxes'].value)
         else:
-            self.rect = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/8, self.origin[1]+ pos[1] - self.bar_width/2],
-                              [self.bar_width/4, self.bar_width], pen='b')
-        view.addItem(self.rect)
+            self.params['Latest error'].set_value("Checkerboard not initialised")
+
+    def highlight_mfm_box(self, box):
+        """
+        Manages the connection between a QComboBox being selected on the right checkerboard
+        and the corresponding bar being highlighted in the bottom left MFM plot.
+        Only used once the checkerboard has been initialised.
+        """
+
+        if self.pre_box is not None:
+            # view.removeItem(self.rect)
+            self.pre_box.setPen('r')
+        self.pre_box = box
+
+        # Set new box to visible and change colour
+        box.setPen('g')
+        box.setVisible(True)
+
+    def highlight_combo(self, combo):
+        """
+        Manages the connection between a box being selected in the bottom left MFM plot
+        and the corresponding QComboBox being highlighted on the right checkerboard.
+        Only used once the checkerboard has been initialised.
+        """
+        if self.pre_combo is not None:
+            self.pre_combo.hidePopup()
+        self.pre_combo = combo
+        combo.showPopup()
+
+
+    # def highlight_MFM(self, pos, orientation):
+    #     # Adding a rectangle into MFM image to highlight the bar being selected in the manual input window
+    #     self.params['Latest error'].set_value(f'highlighting working:{pos}')
+    #     view = self.iv2.getView()
+    #     if self.rect is not None:
+    #         # view.removeItem(self.rect)
+    #         self.rect.setPen('r')
+        
+    #     if orientation == 0:
+    #         self.rect = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/2, self.origin[1] + pos[1] - self.bar_width/8], 
+    #                           [self.bar_width, self.bar_width/4], pen='b')
+    #     else:
+    #         self.rect = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/8, self.origin[1]+ pos[1] - self.bar_width/2],
+    #                           [self.bar_width/4, self.bar_width], pen='b')
+    #     view.addItem(self.rect)
+
+
+    # def highlight_MFM(self, index):
+    #     # Adding a rectangle into MFM image to highlight the bar being selected in the manual input window
+    #     # turn visibility to true
+    #     # change colour from default
+    #     # if one was previously selected, turn its colour to another
+    #     pos = self.combos[index[0]][index[1]][1]
+    #     self.params['Latest error'].set_value(f'highlighting working:{pos}')
+    #     view = self.iv2.getView()
+    #     if self.rect is not None:
+    #         # view.removeItem(self.rect)
+    #         self.rect.setPen('r')
+        
+    #     if index[0]%2 == 0:
+    #         self.rect = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/2, self.origin[1] + pos[1] - self.bar_width/8], 
+    #                           [self.bar_width, self.bar_width/4], pen='b')
+    #     else:
+    #         self.rect = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/8, self.origin[1]+ pos[1] - self.bar_width/2],
+    #                           [self.bar_width/4, self.bar_width], pen='b')
+    #     view.addItem(self.rect)
+
 
     # def combo_color(self, combo):
     #     # Get the current text of the combobox to set the color accordingly
@@ -344,7 +492,7 @@ def main():
     reload(fv)
     # shell = get_ipython()
     app = QApplication(sys.argv)
-    w = fv.ManyFilesViewer(ModeView)
+    w = fv.ManyFilesViewer(ScanView)
     w.show()
     sys.exit(app.exec_())
 
