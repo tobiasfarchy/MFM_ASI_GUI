@@ -338,27 +338,84 @@ class ScanView(fv.FileView):
                 if i%2 == 0 and j%2 == 0:
                     # print('hello')
                     pos = ((cols - j - 1)*size_x, (rows - i - 1)*size_y)
-                    # pos = ((cols - j - 1)*size_x, (rows - i - 1)*size_y)
-                    # box = QGraphicsRectItem(multx*pos[0], multy*pos[1], multx*size_x, multy*size_y)
                     box = RectItem(QRectF(self.multx*pos[0], self.multy*pos[1], self.multx*size_x, self.multy*size_y))
-                    # box.setBrush(QBrush(QColor('blue')))
                     self.scene.addItem(box)
                 
                 if (i+j) % 2 == 1:
                     # Add ComboBox in a proxy widget
                     combo = QComboBox()
-                    # combo.setEditable(True) 
-                    # model = combo.model()
 
                     if i%2 == 0:
                         combo.addItems(['→', '←','↷','↶','U']) # ['↑', '↓', '↷','↶','U']
-                        # orientation = 0
                     else:
                         combo.addItems(['↑', '↓', '↷','↶','U'])
-                        # orientation = 1
-                    
-                    # for row, color in enumerate(combo_colors):
-                    #     model.setData(model.index(row, 0), QColor(color), Qt.BackgroundRole)
+
+                    combo.setFrame(False)
+                    proxy = QGraphicsProxyWidget()
+                    proxy.setWidget(combo)
+
+                    pos = ((cols - j - 1)*size_x, (rows - i - 1)*size_y) # doesn't hit cols, rows
+                    proxy.setPos(self.multx*pos[0], self.multy*pos[1])
+                    self.scene.addItem(proxy)
+
+                    if i%2 == 0:
+                        box = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/2, self.origin[1] + pos[1] - self.bar_width/8],
+                                               [self.bar_width, self.bar_width/4],
+                                               pen='b')
+                    else:
+                        box = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/8, self.origin[1]+ pos[1] - self.bar_width/2],
+                                               [self.bar_width/4, self.bar_width],
+                                               pen='b')
+                    box.setVisible(False)
+                    box.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
+                    mfm_view.addItem(box)
+
+                    box.sigClicked.connect(fpartial(self.highlight_combo, combo)) # hover event too?
+                    combo.highlighted.connect(fpartial(self.highlight_mfm_box, box))
+                    combos.append([combo, pos])
+                    boxes.append(box)
+            self.combos.append(combos)
+            self.mfm_boxes.append(boxes)
+
+
+
+    def populate_checkerboard2(self, rows, cols, image_size):
+        """
+        This method populated the checkerboard on the right side of the windows and adds corresponding rectangles to bottom left MFM plot.
+        """
+
+        cols = 2*cols-1
+        rows = 2*rows-1
+        
+        size_x, size_y = (image_size[0]/(cols - 1), 
+                          image_size[1]/(rows - 1))
+        self.scene.clear()
+        self.scene.setBackgroundBrush(QBrush(QColor(128, 128, 128)))
+        mfm_view = self.iv2.getView()
+
+        self.combos = []
+        self.mfm_boxes = []
+        index = [0, 0]
+        for i in range(rows):
+            combos = []
+            boxes = []
+            i_ = 0
+            for j in range(cols):
+                j_ = 0
+                # Add vertices boxes
+                if i%2 == 0 and j%2 == 0:
+                    pos = ((cols - j - 1)*size_x, (rows - i - 1)*size_y)
+                    box = RectItem(QRectF(self.multx*pos[0], self.multy*pos[1], self.multx*size_x, self.multy*size_y))
+                    self.scene.addItem(box)
+                
+                if (i+j) % 2 == 1:
+                    # Add ComboBox in a proxy widget
+                    combo = QComboBox()
+
+                    if i%2 == 0:
+                        combo.addItems(['→', '←','↷','↶','U']) # ['↑', '↓', '↷','↶','U']
+                    else:
+                        combo.addItems(['↑', '↓', '↷','↶','U'])
 
                     combo.setFrame(False)
                     proxy = QGraphicsProxyWidget()
@@ -381,22 +438,15 @@ class ScanView(fv.FileView):
                     mfm_view.addItem(box)
 
                     index = (i_, j_)
-                    # index = ((cols - j - 1)*size_x, (rows - i - 1)*size_y)
                     box.sigClicked.connect(fpartial(self.highlight_combo, combo)) # hover event too?
                     combo.highlighted.connect(fpartial(self.highlight_mfm_box, box))
-                    # combo.highlighted.connect(fpartial(self.highlight_MFM, pos, orientation))
-                    # combo.currentIndexChanged.connect(fpartial(self.combo_color, combo))
                     combos.append([combo, pos])
                     boxes.append(box)
                     j_ += 1
             i_ += 1
             self.combos.append(combos)
             self.mfm_boxes.append(boxes)
-                    
-        # self.scene.setSceneRect(self.origin[0], self.origin[1], cols * iround(multx*size_x), rows * iround(multy*size_y)) # Change this for centering
 
-        # self.iv2.getView().sigXRangeChanged.connect(self.updateGraphicsView)
-        # self.iv2.getView().sigYRangeChanged.connect(self.updateGraphicsView)
 
     def show_all_bars(self):
         """ 
