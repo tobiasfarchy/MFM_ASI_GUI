@@ -2,7 +2,7 @@
 """
 @author: tfarchy
 
-Packages to install: puzzlepiece, numpy, pyqtgraph, opencv-python, scipy, PyQt5, matplotlib
+Packages to install: python -m pip install puzzlepiece numpy pyqtgraph opencv-python scipy PyQt5 matplotlib
 """
 
 import file_viewer as fv
@@ -67,6 +67,7 @@ class ScanView(fv.FileView):
         pzp.param.readout(self, 'Latest error')(None)
         # self.rect = None
         self.pre_box = None # previously seleted bar box stored here
+        self.pre_combo = None
         self.mfm_view = None # MFM window ROI stored here
         self.multx, self.multy = 5, 2
         self.combos = None # QComboBoxes stored here
