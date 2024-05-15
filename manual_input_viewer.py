@@ -79,16 +79,11 @@ class ScanView(fv.FileView):
         size = pzp.param.spinbox(self, "Arrow point size", 0)(None)
         view_link = pzp.param.checkbox(self, "AFM MFM axis link", True)(None)
         mfm_boxes = pzp.param.checkbox(self, "MFM bar boxes", True)(None)
-        # vertex_posx = pzp.param.spinbox(self, "Vertex pos x", 0.0)(None)
-        # vertex_posy = pzp.param.spinbox(self, "Vertex pos y", 0.0)(None)
         rot.changed.connect(self.rot_image)
         size.changed.connect(self.arrow_size)
         view_link.changed.connect(self.image_view_link)
         mfm_boxes.changed.connect(self.show_all_bars)
         pzp.param.readout(self, 'Latest error')(None)
-        # self.rect = None
-        self.pre_box = None # previously seleted bar box stored here
-        self.pre_combo = None
         self.mfm_view = None # MFM window ROI stored here
         self.multx, self.multy = 5, 2
         self.mfm_boxes = None # MFM bar boxes stored here
@@ -122,9 +117,6 @@ class ScanView(fv.FileView):
                     mfm_view = self.iv2.getView()
                     # Adding boxes to mfm view
                     if col < len(vrtx_coords[0]) - 1:
-                        # hbox = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/2, self.origin[1] + pos[1] - self.bar_width/8],
-                        #                        [self.bar_width, self.bar_width/4],
-                        #                        pen='b')
 
                         # Build the ROI box
                         h_box = pg.RectROI([vrtx_coords[row, col, 0], (vrtx_coords[row, col, 1] + vrtx_coords[row, col + 1, 1])/2 - h_bar_width/2],
@@ -140,26 +132,19 @@ class ScanView(fv.FileView):
                         h_state.setPos((vrtx_coords[row, col, 0] + vrtx_coords[row, col + 1, 0])/2, (vrtx_coords[row, col, 1] + vrtx_coords[row, col + 1, 1])/2)
                         font = h_state.textItem.font()
                         font.setBold(True)
-                        # h_state.setFlag(h_state.ItemIgnoresTransformations)
-                        # h_box.setVisible(False)
-                        # h_box.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
+
                         mfm_view.addItem(h_state)
                         mfm_view.addItem(h_box)
+
                         for handle in h_box.getHandles():
                             h_box.removeHandle(handle)
-                        # h_box.update()
 
                         h_state.sigClicked.connect(fpartial(self.h_switch_state, h_state, h_box))
-                        # h_state.sigClicked.connect(fpartial(self.h_switch_state, h_state))
+
                         row_x_boxes.append(h_box)
                         row_x_bars.append(h_state)
-                        # self.text_items.append(h_state)
 
                     if row < len(vrtx_coords) - 1:
-                        # vbox = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/2, self.origin[1] + pos[1] - self.bar_width/8],
-                        #                   [self.bar_width, self.bar_width/4],
-                        #                   pen='b')
-                        # Build the ROI box
                         v_box = pg.RectROI([(vrtx_coords[row, col, 0] + vrtx_coords[row + 1, col, 0])/2 - v_bar_width/2, vrtx_coords[row, col, 1]],
                                            [v_bar_width, vrtx_coords[row + 1, col, 1] - vrtx_coords[row, col, 1]],
                                            pen = pg.mkPen(None),
@@ -173,20 +158,17 @@ class ScanView(fv.FileView):
                         v_state.setPos((vrtx_coords[row, col, 0] + vrtx_coords[row + 1, col, 0])/2, (vrtx_coords[row, col, 1] + vrtx_coords[row + 1, col, 1])/2)
                         font = v_state.textItem.font()
                         font.setBold(True)
-                        # v_state.setFlag(v_state.ItemIgnoresTransformations)
-                        # v_box.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
-                        # v_box.setVisible(False)
+
                         mfm_view.addItem(v_state)
                         mfm_view.addItem(v_box)
                         for handle in v_box.getHandles():
                             v_box.removeHandle(handle)
-                        # v_box.update()
 
                         v_state.sigClicked.connect(fpartial(self.v_switch_state, v_state, v_box))
-                        # v_state.sigClicked.connect(fpartial(self.v_switch_state, v_state))
+
                         row_y_boxes.append(v_box)
                         row_y_bars.append(v_state)
-                        # self.text_items.append(v_state)
+
                 x_boxes.append(row_x_boxes)
                 x_bars.append(row_x_bars)
                 if len(row_y_bars) != 0: # Exclude the last row where this will be empty
@@ -195,7 +177,6 @@ class ScanView(fv.FileView):
             self.mfm_boxes = [x_boxes, y_boxes]
             self.text_items = [x_bars, y_bars]
             self.mfm_ref = mfm_view.viewRange()[0][1] - mfm_view.viewRange()[0][0]
-            # mfm_view.sigRangeChanged.connect(self.scaleTextWithZoom)
             self.params['Arrow point size'].set_value(self.text_items[0][0][0].textItem.font().pointSize())
 
         @pzp.action.define(self, "Default mag")
@@ -298,11 +279,7 @@ class ScanView(fv.FileView):
         iv2.getView().setYLink(iv1.getView())
         iv2.getView().setXLink(iv1.getView())
         layout.addWidget(iv2, 0, 1, 2, 1) # adds to row 1, col 0
-        
-
-
-        # Set MFM plot to change views of everything linked to it
-        
+                
         return main_layout
 
     def set_file(self, filename=None):
@@ -362,8 +339,6 @@ class ScanView(fv.FileView):
             viewbox1.autoRange()
             xrange, yrange = viewbox2.viewRange()
             self.updateMFMView()
-            # self.iv2.getView().sigXRangeChanged.connect(self.updateMFMView)
-            # self.iv2.getView().sigYRangeChanged.connect(self.updateMFMView)
             self.iv2.getView().sigRangeChanged.connect(self.updateMFMView)
 
     def updateMFMView(self):
@@ -385,10 +360,6 @@ class ScanView(fv.FileView):
         Manages the implementation of the 'MFM bar boxes' checkbox.
         Sets all bar boxes in bottom left MFM plot to visible and resets their colour to default (blue).
         """
-        # if self.params['MFM bar boxes'].value == True:
-        #     for boxes in self.iv2.getView().allChildren():
-        #         boxes.setPen('b')
-        #         boxes.setVisible(self.params['MFM bar boxes'].value)
         if self.mfm_boxes is not None:
             for box in [box for box_lst in self.mfm_boxes for box_row in box_lst for box in box_row]:
                 box.setVisible(self.params['MFM bar boxes'].value)
@@ -403,7 +374,6 @@ class ScanView(fv.FileView):
         """
 
         if self.pre_box is not None:
-            # view.removeItem(self.rect)
             self.pre_box.setPen('r')
         self.pre_box = box
 
@@ -424,8 +394,6 @@ class ScanView(fv.FileView):
             return 2
         
     def v_switch_state(self, text, box):
-        # print('VERTICAL CLICK')
-        # print(arg1, arg2)
         state_index = self.v_options.index(text.getText())
         text.customSetText(self.v_options[(state_index + 1) % len(self.v_options)])
         text.setColor(self.colors[(state_index + 1) % len(self.v_options)])
@@ -437,21 +405,8 @@ class ScanView(fv.FileView):
         new_index = (state_index + 1) % len(self.h_options)
         text.customSetText(self.h_options[new_index])
         text.setColor(self.colors[new_index])
-        # print('HORIZONTAL CLICK', options[new_index], new_index)
         text.update()
         box.setPen('darkRed')
-
-    # def scaleTextWithZoom(self):
-    #     # Get the current range of the view to determine the scale factor
-    #     xrange, yrange = self.iv2.getView().viewRange()
-    #     scale_factor = self.mfm_ref/(xrange[1] - xrange[0]) # (xrange[1] - xrange[0]) / 2*self.ASI_shape[0]  # Adjust denominator for scaling behavior
-
-    #     # Set the font size based on the scale factor
-    #     for text_item in [item for item_cat in self.text_items for item_row in item_cat for item in item_row]:
-    #         font = text_item.textItem.font()
-    #         point_size = font.pointSize()
-    #         font.setPointSize(min(int(np.ceil((scale_factor*point_size))), 25))  # Adjust scaling factor as needed
-    #         text_item.setFont(font)
 
     def arrow_size(self):
         for text_item in [item for item_cat in self.text_items for item_row in item_cat for item in item_row]:
