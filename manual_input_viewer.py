@@ -74,8 +74,8 @@ class ScanView(fv.FileView):
     def define_params(self):
         rot = pzp.param.spinbox(self, "Rotation", 0.0)(None)
         filename = pzp.param.text(self, "Filename", 'Placeholder')(None)
-        default_satx = pzp.param.spinbox(self, "Default x-bar saturation: → = 0 or ← = 1", 0)(None) 
-        default_saty = pzp.param.spinbox(self, "Default y-bar saturation: ↑ = 0 or ↓ = 1", 0)(None)
+        default_satx = pzp.param.spinbox(self, "Default x-bar saturation: ← = 1 or → = 2", 0)(None) 
+        default_saty = pzp.param.spinbox(self, "Default y-bar saturation: ↑ = 1 or ↓ = 2", 0)(None)
         size = pzp.param.spinbox(self, "Arrow point size", 0)(None)
         view_link = pzp.param.checkbox(self, "AFM MFM axis link", True)(None)
         mfm_boxes = pzp.param.checkbox(self, "MFM bar boxes", True)(None)
@@ -96,7 +96,7 @@ class ScanView(fv.FileView):
         @pzp.action.define(self, "Generate ASI Input")
         def generate_checkerboard(self):
             # Read horizontal and vertical lines
-            y, x = int(np.round(self.crosshair_h.value())), int(np.round(self.crosshair_v.value()))
+            y, x = int(np.round(self.line_h.value())), int(np.round(self.line_v.value()))
     
             # Predict SI dimensions
             vrtx_coords, vrtx_img, (xbars_img, ybars_img) = square_lattice_bars(self.rot_AFM, self.rot_MFM, x, y)
@@ -181,14 +181,11 @@ class ScanView(fv.FileView):
 
         @pzp.action.define(self, "Default mag")
         def default_checkerboard(self):
-            if len(self.combos) > 0:
-                for i, combo_lst in enumerate(self.combos):
-                    if i%2 == 0: # xbars
-                        default_val = self.params["Default x-bar saturation: → = 0 or ← = 1"].value
-                    else: # ybars
-                        default_val = self.params["Default y-bar saturation: ↑ = 0 or ↓ = 1"].value
-                    for combo in combo_lst:
-                        combo.setCurrentIndex(default_val)
+            if len(self.text_items) > 0:
+                for text in [text_item for text_lst in self.text_items[0] for text_item in text_lst]:
+                    text.customSetText(self.h_options[self.params["Default x-bar saturation: ← = 1 or → = 2"]])
+                for text in [text_item for text_lst in self.text_items[1] for text_item in text_lst]:
+                    text.customSetText(self.v_options[self.params["Default y-bar saturation: ↑ = 1 or ↓ = 2"]])
             else:
                 self.params['Latest error'].set_value('Generate checkerboard first')
         
@@ -261,12 +258,14 @@ class ScanView(fv.FileView):
         # Hide the Menu button
         iv1.ui.menuBtn.hide()
         layout.addWidget(iv1, 0, 0, 2, 1)
-        iv1.getView().addItem(crosshair_v := pg.InfiniteLine(pos = 0, angle=90, movable=True)) #change pos to be in middle?
-        iv1.getView().addItem(crosshair_h := pg.InfiniteLine(pos = 0, angle=0, movable=True))
-        self.crosshair_v = pg.InfiniteLine(angle=90, movable=True)
-        self.crosshair_h = pg.InfiniteLine(angle=0, movable=True)
-        self.crosshair_v = crosshair_v
-        self.crosshair_h = crosshair_h
+        line_v = pg.InfiniteLine(pos = 0, angle=90, movable=True)
+        line_h = pg.InfiniteLine(pos = 0, angle=0, movable=True)
+        iv1.getView().addItem(line_v) #change pos to be in middle?
+        iv1.getView().addItem(line_h)
+        self.line_v = pg.InfiniteLine(angle=90, movable=True)
+        self.line_h = pg.InfiniteLine(angle=0, movable=True)
+        self.line_v = line_v
+        self.line_h = line_h
 
         
         # Full illumination spectrum view
@@ -297,8 +296,8 @@ class ScanView(fv.FileView):
         self.img_MFM = np.loadtxt(filename[:-len("MFM.txt")] + 'MFM.txt')
 
         # Move crosshairs to center of image
-        self.crosshair_h.setValue(int(self.img_AFM.shape[0]/2))
-        self.crosshair_v.setValue(int(self.img_AFM.shape[1]/2))
+        self.line_h.setValue(int(self.img_AFM.shape[0]/2))
+        self.line_v.setValue(int(self.img_AFM.shape[1]/2))
 
         # Rotate images
         self.rot_image()
