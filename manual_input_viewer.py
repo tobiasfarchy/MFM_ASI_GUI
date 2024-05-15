@@ -19,7 +19,7 @@ from scipy.signal import find_peaks
 from PyQt5.QtWidgets import QApplication, QFileDialog, QComboBox, QGraphicsProxyWidget, QGraphicsRectItem
 from PyQt5.QtGui import QBrush, QColor, QPainter
 from PyQt5.QtCore import QRectF, Qt
-from copy import deepcopy
+from MFM_read_toolkit import square_lattice_bars
 
 combo_colors = ['darkRed','darkBlue', 'darkGreen', 'darkYellow', 'black']
 
@@ -49,6 +49,25 @@ class RectItem(QGraphicsRectItem):
         painter.drawRect(option.rect)
         painter.restore()
 
+class CustomTextItem(pg.TextItem):
+    sigClicked = pg.Qt.QtCore.Signal(object)
+
+    def __init__(self, text="", **kwargs):
+        super(CustomTextItem, self).__init__(text, **kwargs)
+        self.setAcceptHoverEvents(True)
+        self._text = text  # Store the text
+
+    def getText(self):
+        return self._text  # Method to retrieve the text
+    
+    def customSetText(self, text):
+        self._text = text
+        super(CustomTextItem, self).setText(text)
+    
+    def mousePressEvent(self, event):
+        self.sigClicked.emit(self)  # Emit the signal passing the text item instance
+        super(CustomTextItem, self).mousePressEvent(event)  # Continue processing the parent class event
+        event.accept()
 
 
 class ScanView(fv.FileView):
@@ -57,11 +76,13 @@ class ScanView(fv.FileView):
         filename = pzp.param.text(self, "Filename", 'Placeholder')(None)
         default_satx = pzp.param.spinbox(self, "Default x-bar saturation: → = 0 or ← = 1", 0)(None) 
         default_saty = pzp.param.spinbox(self, "Default y-bar saturation: ↑ = 0 or ↓ = 1", 0)(None)
+        size = pzp.param.spinbox(self, "Arrow point size", 0)(None)
         view_link = pzp.param.checkbox(self, "AFM MFM axis link", True)(None)
-        mfm_boxes = pzp.param.checkbox(self, "MFM bar boxes", False)(None)
+        mfm_boxes = pzp.param.checkbox(self, "MFM bar boxes", True)(None)
         # vertex_posx = pzp.param.spinbox(self, "Vertex pos x", 0.0)(None)
         # vertex_posy = pzp.param.spinbox(self, "Vertex pos y", 0.0)(None)
         rot.changed.connect(self.rot_image)
+        size.changed.connect(self.arrow_size)
         view_link.changed.connect(self.image_view_link)
         mfm_boxes.changed.connect(self.show_all_bars)
         pzp.param.readout(self, 'Latest error')(None)
@@ -70,8 +91,11 @@ class ScanView(fv.FileView):
         self.pre_combo = None
         self.mfm_view = None # MFM window ROI stored here
         self.multx, self.multy = 5, 2
-        self.combos = None # QComboBoxes stored here
         self.mfm_boxes = None # MFM bar boxes stored here
+        self.text_items = []
+        self.h_options = ['U', '←', '→']
+        self.v_options = ['U', '↑', '↓']
+        self.colors = ['r', 'b', 'g']
 
     def define_actions(self):
         @pzp.action.define(self, "Generate ASI Input")
@@ -80,16 +104,99 @@ class ScanView(fv.FileView):
             y, x = int(np.round(self.crosshair_h.value())), int(np.round(self.crosshair_v.value()))
     
             # Predict SI dimensions
-            row_raw, col_raw = self.rot_AFM[y], [self.rot_AFM[i][x] for i in range(len(self.rot_AFM))]
-            peaks_x, peaks_y = clean_peaks(data_raw = row_raw, quant = 0.8), clean_peaks(data_raw = col_raw, quant = 0.8)
-            image_size = (peaks_x[-1] - peaks_x[0], peaks_y[-1] - peaks_y[0])
-            self.bar_width = np.mean([peaks_x[1] - peaks_x[0], peaks_y[1] - peaks_y[0]])
-            num_x, num_y = len(peaks_x), len(peaks_y)
-            self.origin = min(peaks_x), min(peaks_y)
+            vrtx_coords, vrtx_img, (xbars_img, ybars_img) = square_lattice_bars(self.rot_AFM, self.rot_MFM, x, y)
+            self.ASI_shape = vrtx_coords.shape[:1]
+            h_bar_width = (vrtx_coords[1, 0, 1] - vrtx_coords[0, 0, 1])/4
+            v_bar_width = (vrtx_coords[0, 1, 0] - vrtx_coords[0, 0, 0])/4
 
-            print(num_x, num_y)
-            
-            self.populate_checkerboard(rows = num_y, cols = num_x, image_size = image_size)
+            x_boxes = []
+            y_boxes = []
+            x_bars = []
+            y_bars = []
+            for row in range(len(vrtx_coords)):
+                row_x_boxes = []
+                row_y_boxes = []
+                row_x_bars = []
+                row_y_bars = []
+                for col in range(len(vrtx_coords[0])):
+                    mfm_view = self.iv2.getView()
+                    # Adding boxes to mfm view
+                    if col < len(vrtx_coords[0]) - 1:
+                        # hbox = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/2, self.origin[1] + pos[1] - self.bar_width/8],
+                        #                        [self.bar_width, self.bar_width/4],
+                        #                        pen='b')
+
+                        # Build the ROI box
+                        h_box = pg.RectROI([vrtx_coords[row, col, 0], (vrtx_coords[row, col, 1] + vrtx_coords[row, col + 1, 1])/2 - h_bar_width/2],
+                                           [vrtx_coords[row, col + 1, 0] - vrtx_coords[row, col, 0], h_bar_width],
+                                            pen = pg.mkPen(None),
+                                            movable = False)
+                        
+                        # Build the bar
+                        state = self.pred_mag(xbars_img[row, col])
+                        h_state = CustomTextItem(text = self.h_options[state],
+                                                 anchor = (0.5, 0.5),
+                                                 color = self.colors[state])
+                        h_state.setPos((vrtx_coords[row, col, 0] + vrtx_coords[row, col + 1, 0])/2, (vrtx_coords[row, col, 1] + vrtx_coords[row, col + 1, 1])/2)
+                        font = h_state.textItem.font()
+                        font.setBold(True)
+                        # h_state.setFlag(h_state.ItemIgnoresTransformations)
+                        # h_box.setVisible(False)
+                        # h_box.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
+                        mfm_view.addItem(h_state)
+                        mfm_view.addItem(h_box)
+                        for handle in h_box.getHandles():
+                            h_box.removeHandle(handle)
+                        # h_box.update()
+
+                        h_state.sigClicked.connect(fpartial(self.h_switch_state, h_state, h_box))
+                        # h_state.sigClicked.connect(fpartial(self.h_switch_state, h_state))
+                        row_x_boxes.append(h_box)
+                        row_x_bars.append(h_state)
+                        # self.text_items.append(h_state)
+
+                    if row < len(vrtx_coords) - 1:
+                        # vbox = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/2, self.origin[1] + pos[1] - self.bar_width/8],
+                        #                   [self.bar_width, self.bar_width/4],
+                        #                   pen='b')
+                        # Build the ROI box
+                        v_box = pg.RectROI([(vrtx_coords[row, col, 0] + vrtx_coords[row + 1, col, 0])/2 - v_bar_width/2, vrtx_coords[row, col, 1]],
+                                           [v_bar_width, vrtx_coords[row + 1, col, 1] - vrtx_coords[row, col, 1]],
+                                           pen = pg.mkPen(None),
+                                           movable = False)
+                        
+                        # Build the bar
+                        state = self.pred_mag(ybars_img[row, col])
+                        v_state = CustomTextItem(text = self.v_options[state],
+                                                anchor = (0.5, 0.5),
+                                                color = self.colors[state])
+                        v_state.setPos((vrtx_coords[row, col, 0] + vrtx_coords[row + 1, col, 0])/2, (vrtx_coords[row, col, 1] + vrtx_coords[row + 1, col, 1])/2)
+                        font = v_state.textItem.font()
+                        font.setBold(True)
+                        # v_state.setFlag(v_state.ItemIgnoresTransformations)
+                        # v_box.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
+                        # v_box.setVisible(False)
+                        mfm_view.addItem(v_state)
+                        mfm_view.addItem(v_box)
+                        for handle in v_box.getHandles():
+                            v_box.removeHandle(handle)
+                        # v_box.update()
+
+                        v_state.sigClicked.connect(fpartial(self.v_switch_state, v_state, v_box))
+                        # v_state.sigClicked.connect(fpartial(self.v_switch_state, v_state))
+                        row_y_boxes.append(v_box)
+                        row_y_bars.append(v_state)
+                        # self.text_items.append(v_state)
+                x_boxes.append(row_x_boxes)
+                x_bars.append(row_x_bars)
+                if len(row_y_bars) != 0: # Exclude the last row where this will be empty
+                    y_boxes.append(row_y_boxes)
+                    y_bars.append(row_y_bars)
+            self.mfm_boxes = [x_boxes, y_boxes]
+            self.text_items = [x_bars, y_bars]
+            self.mfm_ref = mfm_view.viewRange()[0][1] - mfm_view.viewRange()[0][0]
+            # mfm_view.sigRangeChanged.connect(self.scaleTextWithZoom)
+            self.params['Arrow point size'].set_value(self.text_items[0][0][0].textItem.font().pointSize())
 
         @pzp.action.define(self, "Default mag")
         def default_checkerboard(self):
@@ -106,32 +213,22 @@ class ScanView(fv.FileView):
         
         @pzp.action.define(self, "Save Configuration ")
         def save_config(self):
-            if len(self.combos) > 0:
-                # xbars = []
-                # ybars = []
-                # i = 0
-                # for combo_lst in self.combos:
-                #     bars_lst = []
-                #     for combo in combo_lst:
-                #         bars_lst.append(combo.currentIndex())
-                #     if i%2 == 0:
-                #         xbars.append(bars_lst)
-                #     else:
-                #         ybars.append(bars_lst)
-                #     i += 1
+            if len(self.text_items) > 0:
                 empty_val = None
-                all_bars = np.zeros((len(self.combos), len(self.combos[0])*2 + 1))
-                for i, combo_lst in enumerate(self.combos):
-                    if i%2 == 0: # xbars
-                        all_bars[i, 0] = empty_val
-                        for j, combo in enumerate(combo_lst):
-                            all_bars[i, 2*(j+1) - 1] = combo.currentIndex()
-                            all_bars[i, 2*(j+1)] = empty_val # Add empty space for vertex
+                all_bars = np.zeros((len(self.text_items[0]) + len(self.text_items[1]),
+                                     len(self.text_items[0][0]) + len(self.text_items[1][0])))
+                for row in range(len(self.text_items[0]) + len(self.text_items[1])):
+                    if row%2 == 0: # xbars
+                        all_bars[row, 0] = empty_val
+                        for j, text in enumerate(self.text_items[0][int(row/2)]):
+                            all_bars[row, 2*(j+1) - 1] = self.h_options.index(text.getText())
+                            all_bars[row, 2*(j+1)] = empty_val # Add empty space for vertex
                     else: # ybars
-                        all_bars[i, 0] = combo_lst[0].currentIndex() + 0.5 # 0.5 to mark ybars vs xbars
-                        for j, combo in enumerate(combo_lst[1:]):
-                            all_bars[i, 2*(j+1) - 1] = empty_val # Empty space for vertex
-                            all_bars[i, 2*(j+1)] = combo.currentIndex() + 0.5 # 0.5 to mark ybars vs xbars
+                        items = self.text_items[1][int(row/2)]
+                        all_bars[row, 0] = self.v_options.index(items[0].getText()) + 0.5 # 0.5 to mark ybars vs xbars
+                        for j, text in enumerate(self.text_items[1][int(row/2)][1:]):
+                            all_bars[row, 2*(j+1) - 1] = empty_val # Empty space for vertex
+                            all_bars[row, 2*(j+1)] = self.v_options.index(text.getText()) + 0.5 # 0.5 to mark ybars vs xbars
 
             else:
                 self.params['Latest error'].set_value('Generate checkerboard first')
@@ -142,7 +239,6 @@ class ScanView(fv.FileView):
                   f"_rot{self.params['Rotation'].value}")
             # save_config_helper((xbars, ybars), fname)
             np.savetxt(fname + '_config.csv', np.flip(np.flip(all_bars, axis=0), axis =1), delimiter=',', fmt='%s')
-
 
         @pzp.action.define(self, "Load Configuration")
         def load_config(self):
@@ -168,6 +264,9 @@ class ScanView(fv.FileView):
         
         w = pg.QtWidgets.QWidget()
         main_layout.addWidget(w)
+
+        main_layout.setRowStretch(0, 3)
+        # main_layout.setRowStretch(1, 3)
         
         self.grid = layout = pg.QtWidgets.QGridLayout()
         layout.setColumnStretch(0, 5)
@@ -180,7 +279,7 @@ class ScanView(fv.FileView):
         iv1.ui.roiBtn.hide()
         # Hide the Menu button
         iv1.ui.menuBtn.hide()
-        layout.addWidget(iv1)
+        layout.addWidget(iv1, 0, 0, 2, 1)
         iv1.getView().addItem(crosshair_v := pg.InfiniteLine(pos = 0, angle=90, movable=True)) #change pos to be in middle?
         iv1.getView().addItem(crosshair_h := pg.InfiniteLine(pos = 0, angle=0, movable=True))
         self.crosshair_v = pg.InfiniteLine(angle=90, movable=True)
@@ -198,18 +297,11 @@ class ScanView(fv.FileView):
         iv2.setColorMap(pg.colormap.get('afmhot', source = 'matplotlib'))
         iv2.getView().setYLink(iv1.getView())
         iv2.getView().setXLink(iv1.getView())
-        layout.addWidget(iv2, 1, 0) # adds to row 1, col 0
+        layout.addWidget(iv2, 0, 1, 2, 1) # adds to row 1, col 0
         
 
-        # Set up Graphics View
-        self.graphics_view = graphics_view = pg.GraphicsView()
-        self.scene = pg.GraphicsScene()
-        graphics_view.setScene(self.scene)
-        layout.addWidget(graphics_view, 0, 1, 2, 1)
 
         # Set MFM plot to change views of everything linked to it
-        iv2.getView().sigXRangeChanged.connect(self.updateGraphicsView)
-        iv2.getView().sigYRangeChanged.connect(self.updateGraphicsView)
         
         return main_layout
 
@@ -250,31 +342,6 @@ class ScanView(fv.FileView):
         self.iv1.setImage(self.rot_AFM.T)
         self.iv2.setImage(self.rot_MFM.T)
 
-    def updateGraphicsView(self):
-        """
-        This method manages the linking of bottom left MFM plot with the view of the right checkerboard.
-        Only used after the checkerboard has been initialised in function ScanView.populate_checkerboard. 
-        """
-        # Get the current view range from ImageView
-        xrange, yrange = self.iv2.getView().viewRange()
-
-        item = self.grid.itemAtPosition(0, 1)
-        if self.combos is not None:
-            # Set the same range to GraphicsView
-            self.graphics_view.setRange(QRectF(self.multx*(xrange[0] - self.origin[0]), 
-                                        self.multy*(yrange[0] - self.origin[1]), 
-                                        int(self.multx*(xrange[1]-xrange[0])), 
-                                        int(self.multy*(yrange[1]-yrange[0]))), 
-                                        padding=0)
-            
-            if self.params['AFM MFM axis link'].value == False:
-                self.updateMFMView(xrange, yrange)
-        # else:
-        #     print("Error: No existing checkerboard")
-
-        if self.params['AFM MFM axis link'].value == False:
-            self.updateMFMView(xrange, yrange)
-
     def image_view_link(self):
         """ 
         This method manages the implementation of the 'AFM MFM axis link' checkbox.
@@ -294,14 +361,17 @@ class ScanView(fv.FileView):
             viewbox2.setXLink(None)
             viewbox1.autoRange()
             xrange, yrange = viewbox2.viewRange()
-            self.updateMFMView(xrange, yrange)
+            self.updateMFMView()
+            # self.iv2.getView().sigXRangeChanged.connect(self.updateMFMView)
+            # self.iv2.getView().sigYRangeChanged.connect(self.updateMFMView)
+            self.iv2.getView().sigRangeChanged.connect(self.updateMFMView)
 
-    def updateMFMView(self, xrange, yrange):
+    def updateMFMView(self):
         """ 
         This method updates the rectangular ROI in the top left AFM plot according to the viewing range of the bottom left MFM plot.
         Only used if 'AFM MFM axis link' is set to False
         """
-
+        xrange, yrange = self.iv2.getView().viewRange()
         viewbox1 = self.iv1.getView()
         if self.mfm_view is not None:
             viewbox1.removeItem(self.mfm_view)
@@ -309,144 +379,6 @@ class ScanView(fv.FileView):
                                     [xrange[1] - xrange[0], yrange[1] - yrange[0]],
                                     pen='w')
         viewbox1.addItem(self.mfm_view)
-        
-    def populate_checkerboard(self, rows, cols, image_size):
-        """
-        This method populated the checkerboard on the right side of the windows and adds corresponding rectangles to bottom left MFM plot.
-        """
-
-        cols = 2*cols-1
-        rows = 2*rows-1
-        
-        size_x, size_y = (image_size[0]/(cols - 1), 
-                          image_size[1]/(rows - 1))
-        # print('sizes', size_x, size_y)
-        self.scene.clear()
-        self.scene.setBackgroundBrush(QBrush(QColor(128, 128, 128)))
-        mfm_view = self.iv2.getView()
-
-        self.combos = []
-        self.mfm_boxes = []
-        index = [0, 0]
-        for i in range(rows):
-            combos = []
-            boxes = []
-            i_ = 0
-            for j in range(cols):
-                j_ = 0
-                # Add vertices boxes
-                if i%2 == 0 and j%2 == 0:
-                    # print('hello')
-                    pos = ((cols - j - 1)*size_x, (rows - i - 1)*size_y)
-                    box = RectItem(QRectF(self.multx*pos[0], self.multy*pos[1], self.multx*size_x, self.multy*size_y))
-                    self.scene.addItem(box)
-                
-                if (i+j) % 2 == 1:
-                    # Add ComboBox in a proxy widget
-                    combo = QComboBox()
-
-                    if i%2 == 0:
-                        combo.addItems(['→', '←','↷','↶','U']) # ['↑', '↓', '↷','↶','U']
-                    else:
-                        combo.addItems(['↑', '↓', '↷','↶','U'])
-
-                    combo.setFrame(False)
-                    proxy = QGraphicsProxyWidget()
-                    proxy.setWidget(combo)
-
-                    pos = ((cols - j - 1)*size_x, (rows - i - 1)*size_y) # doesn't hit cols, rows
-                    proxy.setPos(self.multx*pos[0], self.multy*pos[1])
-                    self.scene.addItem(proxy)
-
-                    if i%2 == 0:
-                        box = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/2, self.origin[1] + pos[1] - self.bar_width/8],
-                                               [self.bar_width, self.bar_width/4],
-                                               pen='b')
-                    else:
-                        box = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/8, self.origin[1]+ pos[1] - self.bar_width/2],
-                                               [self.bar_width/4, self.bar_width],
-                                               pen='b')
-                    box.setVisible(False)
-                    box.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
-                    mfm_view.addItem(box)
-
-                    box.sigClicked.connect(fpartial(self.highlight_combo, combo)) # hover event too?
-                    combo.highlighted.connect(fpartial(self.highlight_mfm_box, box))
-                    combos.append([combo, pos])
-                    boxes.append(box)
-            self.combos.append(combos)
-            self.mfm_boxes.append(boxes)
-
-
-
-    def populate_checkerboard2(self, rows, cols, image_size):
-        """
-        This method populated the checkerboard on the right side of the windows and adds corresponding rectangles to bottom left MFM plot.
-        """
-
-        cols = 2*cols-1
-        rows = 2*rows-1
-        
-        size_x, size_y = (image_size[0]/(cols - 1), 
-                          image_size[1]/(rows - 1))
-        self.scene.clear()
-        self.scene.setBackgroundBrush(QBrush(QColor(128, 128, 128)))
-        mfm_view = self.iv2.getView()
-
-        self.combos = []
-        self.mfm_boxes = []
-        index = [0, 0]
-        for i in range(rows):
-            combos = []
-            boxes = []
-            i_ = 0
-            for j in range(cols):
-                j_ = 0
-                # Add vertices boxes
-                if i%2 == 0 and j%2 == 0:
-                    pos = ((cols - j - 1)*size_x, (rows - i - 1)*size_y)
-                    box = RectItem(QRectF(self.multx*pos[0], self.multy*pos[1], self.multx*size_x, self.multy*size_y))
-                    self.scene.addItem(box)
-                
-                if (i+j) % 2 == 1:
-                    # Add ComboBox in a proxy widget
-                    combo = QComboBox()
-
-                    if i%2 == 0:
-                        combo.addItems(['→', '←','↷','↶','U']) # ['↑', '↓', '↷','↶','U']
-                    else:
-                        combo.addItems(['↑', '↓', '↷','↶','U'])
-
-                    combo.setFrame(False)
-                    proxy = QGraphicsProxyWidget()
-                    proxy.setWidget(combo)
-
-                    pos = ((cols - j - 1)*size_x, (rows - i - 1)*size_y) # doesn't hit cols, rows
-                    proxy.setPos(self.multx*pos[0], self.multy*pos[1])
-                    self.scene.addItem(proxy)
-
-                    if i%2 == 0:
-                        box = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/2, self.origin[1] + pos[1] - self.bar_width/8],
-                                               [self.bar_width, self.bar_width/4],
-                                               pen='b')
-                    else:
-                        box = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/8, self.origin[1]+ pos[1] - self.bar_width/2],
-                                               [self.bar_width/4, self.bar_width],
-                                               pen='b')
-                    box.setVisible(False)
-                    box.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
-                    mfm_view.addItem(box)
-
-                    index = (i_, j_)
-                    box.sigClicked.connect(fpartial(self.highlight_combo, combo)) # hover event too?
-                    combo.highlighted.connect(fpartial(self.highlight_mfm_box, box))
-                    combos.append([combo, pos])
-                    boxes.append(box)
-                    j_ += 1
-            i_ += 1
-            self.combos.append(combos)
-            self.mfm_boxes.append(boxes)
-
 
     def show_all_bars(self):
         """ 
@@ -458,8 +390,7 @@ class ScanView(fv.FileView):
         #         boxes.setPen('b')
         #         boxes.setVisible(self.params['MFM bar boxes'].value)
         if self.mfm_boxes is not None:
-            for box in [box for box_lst in self.mfm_boxes for box in box_lst]:
-                box.setPen('b')
+            for box in [box for box_lst in self.mfm_boxes for box_row in box_lst for box in box_row]:
                 box.setVisible(self.params['MFM bar boxes'].value)
         else:
             self.params['Latest error'].set_value("Checkerboard not initialised")
@@ -480,63 +411,58 @@ class ScanView(fv.FileView):
         box.setPen('g')
         box.setVisible(True)
 
-    def highlight_combo(self, combo):
-        """
-        Manages the connection between a box being selected in the bottom left MFM plot
-        and the corresponding QComboBox being highlighted on the right checkerboard.
-        Only used once the checkerboard has been initialised.
-        """
-        if self.pre_combo is not None:
-            self.pre_combo.hidePopup()
-        self.pre_combo = combo
-        combo.showPopup()
+    def pred_mag(self, img):
+        if img.shape[0] > img.shape[1]:
+            img = img.T
+        sect = [np.mean(array) for array in np.array_split(np.sum(img[1:-2], axis = 0), 4)]
 
-
-    # def highlight_MFM(self, pos, orientation):
-    #     # Adding a rectangle into MFM image to highlight the bar being selected in the manual input window
-    #     self.params['Latest error'].set_value(f'highlighting working:{pos}')
-    #     view = self.iv2.getView()
-    #     if self.rect is not None:
-    #         # view.removeItem(self.rect)
-    #         self.rect.setPen('r')
+        if np.argmax(np.abs(sect)) != 0 and np.argmax(np.abs(sect)) != 3:
+            return 0
+        elif sect[0] > sect[-1]:
+            return 1
+        else:
+            return 2
         
-    #     if orientation == 0:
-    #         self.rect = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/2, self.origin[1] + pos[1] - self.bar_width/8], 
-    #                           [self.bar_width, self.bar_width/4], pen='b')
-    #     else:
-    #         self.rect = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/8, self.origin[1]+ pos[1] - self.bar_width/2],
-    #                           [self.bar_width/4, self.bar_width], pen='b')
-    #     view.addItem(self.rect)
+    def v_switch_state(self, text, box):
+        # print('VERTICAL CLICK')
+        # print(arg1, arg2)
+        state_index = self.v_options.index(text.getText())
+        text.customSetText(self.v_options[(state_index + 1) % len(self.v_options)])
+        text.setColor(self.colors[(state_index + 1) % len(self.v_options)])
+        text.update()
+        box.setPen('darkRed')
+
+    def h_switch_state(self, text, box):
+        state_index = self.h_options.index(text.getText())
+        new_index = (state_index + 1) % len(self.h_options)
+        text.customSetText(self.h_options[new_index])
+        text.setColor(self.colors[new_index])
+        # print('HORIZONTAL CLICK', options[new_index], new_index)
+        text.update()
+        box.setPen('darkRed')
+
+    # def scaleTextWithZoom(self):
+    #     # Get the current range of the view to determine the scale factor
+    #     xrange, yrange = self.iv2.getView().viewRange()
+    #     scale_factor = self.mfm_ref/(xrange[1] - xrange[0]) # (xrange[1] - xrange[0]) / 2*self.ASI_shape[0]  # Adjust denominator for scaling behavior
+
+    #     # Set the font size based on the scale factor
+    #     for text_item in [item for item_cat in self.text_items for item_row in item_cat for item in item_row]:
+    #         font = text_item.textItem.font()
+    #         point_size = font.pointSize()
+    #         font.setPointSize(min(int(np.ceil((scale_factor*point_size))), 25))  # Adjust scaling factor as needed
+    #         text_item.setFont(font)
+
+    def arrow_size(self):
+        for text_item in [item for item_cat in self.text_items for item_row in item_cat for item in item_row]:
+            font = text_item.textItem.font()
+            font.setPointSize(self.params['Arrow point size'].value)  # Adjust scaling factor as needed
+            text_item.setFont(font)
 
 
-    # def highlight_MFM(self, index):
-    #     # Adding a rectangle into MFM image to highlight the bar being selected in the manual input window
-    #     # turn visibility to true
-    #     # change colour from default
-    #     # if one was previously selected, turn its colour to another
-    #     pos = self.combos[index[0]][index[1]][1]
-    #     self.params['Latest error'].set_value(f'highlighting working:{pos}')
-    #     view = self.iv2.getView()
-    #     if self.rect is not None:
-    #         # view.removeItem(self.rect)
-    #         self.rect.setPen('r')
-        
-    #     if index[0]%2 == 0:
-    #         self.rect = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/2, self.origin[1] + pos[1] - self.bar_width/8], 
-    #                           [self.bar_width, self.bar_width/4], pen='b')
-    #     else:
-    #         self.rect = pg.RectROI([self.origin[0] + pos[0] - self.bar_width/8, self.origin[1]+ pos[1] - self.bar_width/2],
-    #                           [self.bar_width/4, self.bar_width], pen='b')
-    #     view.addItem(self.rect)
 
 
-    # def combo_color(self, combo):
-    #     # Get the current text of the combobox to set the color accordingly
-    #     pal = combo.palette()
-    #     pal.setColor(combo.foregroundRole(), QColor(combo_colors[combo.currentIndex()]))
-    #     combo.setPalette(pal)
-    #     # color = combo_colors[combo.currentIndex()]
-    #     # combo.setStyleSheet(f"QComboBox {{ background-color: {color}; }}")
+
 
 
 def main():
