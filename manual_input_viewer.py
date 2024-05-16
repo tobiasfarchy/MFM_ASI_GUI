@@ -186,9 +186,11 @@ class ScanView(fv.FileView):
         def default_checkerboard(self):
             if len(self.text_items) > 0:
                 for text in [text_item for text_lst in self.text_items[0] for text_item in text_lst]:
-                    text.customSetText(self.h_options[self.params["Default x-bar saturation: ← = 1 or → = 2"]])
+                    text.customSetText(self.h_options[self.params["Default x-bar saturation: ← = 1 or → = 2"].value])
+                    text.setColor(self.colors[self.params["Default x-bar saturation: ← = 1 or → = 2"].value])
                 for text in [text_item for text_lst in self.text_items[1] for text_item in text_lst]:
-                    text.customSetText(self.v_options[self.params["Default y-bar saturation: ↑ = 1 or ↓ = 2"]])
+                    text.customSetText(self.v_options[self.params["Default y-bar saturation: ↑ = 1 or ↓ = 2"].value])
+                    text.setColor(self.colors[self.params["Default y-bar saturation: ↑ = 1 or ↓ = 2"].value])
             else:
                 self.params['Latest error'].set_value('Generate checkerboard first')
         
@@ -231,13 +233,17 @@ class ScanView(fv.FileView):
                 checkerboard = np.flip(np.flip(np.loadtxt(filePath, delimiter = ','), axis = 1), axis = 0)
                 for i, row in enumerate(checkerboard):
                     if i % 2 == 0: # xbars
-                        row_states = [self.h_options[int(state_index)] for state_index in [elem for elem in row if elem is not None]]
-                        for text_item, state in zip([self.text_items[0][int(i/2), row_states]]):
-                            text_item.customSetText(state)
+                        row_states = [int(state_index) for state_index in [elem for elem in row if elem in np.arange(len(self.h_options))]]
+                        # print(row_states)
+                        for text_item, state_index in zip(self.text_items[0][int(i/2)], row_states):
+                            text_item.customSetText(self.h_options[state_index])
+                            text_item.setColor(self.colors[state_index])
                     else: #ybars
-                        row_states = [self.v_options[int(state_index)] for state_index in [elem for elem in row if elem is not None]]
-                        for text_item, state in zip([self.text_items[1][int(i/2)], row_states]):
-                            text_item.customSetText(state)
+                        # print('YBARS')
+                        row_states = [int(state_index - 0.5) for state_index in [elem for elem in row if elem - 0.5 in np.arange(len(self.v_options))]]
+                        for text_item, state_index in zip(self.text_items[1][int(i/2)], row_states):
+                            text_item.customSetText(self.v_options[state_index])
+                            text_item.setColor(self.colors[state_index])
 
         @pzp.action.define(self, "Evaluate vertices")
         def evaluate_vertices(self):
