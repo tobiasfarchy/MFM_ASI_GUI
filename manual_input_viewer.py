@@ -76,16 +76,34 @@ class ScanView(fv.FileView):
         default_satx = pzp.param.spinbox(self, "Default x-bar saturation: ← = 1 or → = 2", 0)(None) 
         default_saty = pzp.param.spinbox(self, "Default y-bar saturation: ↑ = 1 or ↓ = 2", 0)(None)
         size = pzp.param.spinbox(self, "Arrow point size", 0)(None)
-        view_link = pzp.param.checkbox(self, "AFM MFM axis link", True)(None)
-        mfm_boxes = pzp.param.checkbox(self, "MFM bar boxes", True)(None)
+        view_link = pzp.param.checkbox(self, "AFM/MFM axis link", True)(None)
+        vertices = pzp.param.checkbox(self, "Show vertices", False)(None)
+        arrows = pzp.param.checkbox(self, "Show arrows", False)(None)
+        mfm_boxes = pzp.param.checkbox(self, "Highlight arrow changes", True)(None)
+        mask = pzp.param.checkbox(self, 'Show mask')(None)
+        mask_xstretch = pzp.param.spinbox(self, 'Mask x-stretch', 1.0)(None)
+        mask_ystretch = pzp.param.spinbox(self 'Mask y-stretch', 1.0)(None)
+        mask_x = pzp.param.spinbox(self, 'Mask x position', 1.0)(None)
+        mask_y = pzp.param.spinbox(self 'Mask y position', 1.0)(None)
         rot.changed.connect(self.rot_image)
         size.changed.connect(self.arrow_size)
         view_link.changed.connect(self.image_view_link)
         mfm_boxes.changed.connect(self.show_all_bars)
+        vertices.changed.connect(self.show_vertices)
+        arrows.changed.connect(self.show_arrows)
+
+        mask.changed.connect(self.show_mask)
+
+        mask_xstretch.changed.connect(self.adjust_mask)
+        mask_ystretch.changed.connect(self.adjust_mask)
+        mask_x.changed.connect(self.adjust_mask)
+        mask_x.changed.connect(self.adjust_mask)
+
         pzp.param.readout(self, 'Latest error')(None)
         self.mfm_view = None # MFM window ROI stored here
         self.multx, self.multy = 5, 2
         self.mfm_boxes = None # MFM bar boxes stored here
+        self.vertices = None
         self.text_items = []
         self.h_options = ['U', '←', '→']
         self.v_options = ['U', '↑', '↓']
@@ -239,11 +257,31 @@ class ScanView(fv.FileView):
                             text_item.customSetText(self.h_options[state_index])
                             text_item.setColor(self.colors[state_index])
                     else: #ybars
-                        # print('YBARS')
                         row_states = [int(state_index - 0.5) for state_index in [elem for elem in row if elem - 0.5 in np.arange(len(self.v_options))]]
                         for text_item, state_index in zip(self.text_items[1][int(i/2)], row_states):
                             text_item.customSetText(self.v_options[state_index])
                             text_item.setColor(self.colors[state_index])
+
+        @pzp.action.define(self, "Load mask")
+        def load_mask(self):
+            # Make sure ViewBox is clear
+            if self.vertices is not None:
+                self.params['Show vertices'].set_value(False)
+                self.show_vertices()
+            if len(self.text_items) != 0:
+                self.params['Show arrows'].set_value(False)
+                self.show_arrows()
+            if self.mfm_boxes is not None:
+                self.params['Highlight arrow changes'].set_value(False)
+                self.show_all_bars()
+            
+            options = QFileDialog.Options()
+            filePath, _ = QFileDialog.getOpenFileName(self, "Select File", "",
+                                                      "All Files (*);;Text Files (*.txt)", options=options)
+            
+            
+            
+
 
         @pzp.action.define(self, "Evaluate vertices")
         def evaluate_vertices(self):
@@ -337,13 +375,13 @@ class ScanView(fv.FileView):
 
     def image_view_link(self):
         """ 
-        This method manages the implementation of the 'AFM MFM axis link' checkbox.
+        This method manages the implementation of the ' link' checkbox.
         Either axes are linked or only MFM scrolls with the MFM view shown as a rectangular ROI in the AFM plot
         """
 
         viewbox2 = self.iv2.getView()
         viewbox1 = self.iv1.getView() # change these
-        if self.params['AFM MFM axis link'].value == True:
+        if self.params['AFM/MFM axis link'].value == True:
             viewbox2.setYLink(viewbox1)
             viewbox2.setXLink(viewbox1)
             if self.mfm_view is not None:
@@ -360,7 +398,7 @@ class ScanView(fv.FileView):
     def updateMFMView(self):
         """ 
         This method updates the rectangular ROI in the top left AFM plot according to the viewing range of the bottom left MFM plot.
-        Only used if 'AFM MFM axis link' is set to False
+        Only used if 'AFM/MFM axis link' is set to False
         """
         xrange, yrange = self.iv2.getView().viewRange()
         viewbox1 = self.iv1.getView()
@@ -378,7 +416,7 @@ class ScanView(fv.FileView):
         """
         if self.mfm_boxes is not None:
             for box in [box for box_lst in self.mfm_boxes for box_row in box_lst for box in box_row]:
-                box.setVisible(self.params['MFM bar boxes'].value)
+                box.setVisible(self.params['Highlight arrow changes'].value)
         else:
             self.params['Latest error'].set_value("Checkerboard not initialised")
 
@@ -453,58 +491,80 @@ class ScanView(fv.FileView):
 
                 circle = QGraphicsEllipseItem(float(self.vrtx_coords[row + 1][col + 1][0]), float(self.vrtx_coords[row + 1][col + 1][1]), self.bar_width/4, self.bar_width/4)
                 if not all(xbar_macro_check + ybar_macro_check):
-                    row_vertices.append(('U', vertex_colors[0]))
                     circle.setPen(QPen(QColor(vertex_colors[0])))
                     circle.setBrush(QBrush(QColor(vertex_colors[0])))
+                    row_vertices.append(('U', circle))
 
                 elif ([left, right, top, bottom] == ['←', '→', '↓', '↑'] or
                       [left, right, top, bottom] == ['→', '←', '↑', '↓']):
-                    row_vertices.append(('T1', vertex_colors[1]))
                     circle.setPen(QPen(QColor(vertex_colors[1])))
                     circle.setBrush(QBrush(QColor(vertex_colors[1])))
+                    row_vertices.append(('T1', circle))
+
 
                 elif ([left, right, top, bottom] == ['→', '→', '↑', '↑'] or
                       [left, right, top, bottom] == ['→', '→', '↓', '↓'] or
                       [left, right, top, bottom] == ['←', '←', '↑', '↑'] or
                       [left, right, top, bottom] == ['←', '←', '↓', '↓']):
-                    row_vertices.append(('T2', vertex_colors[2]))
                     circle.setPen(QPen(QColor(vertex_colors[2])))
                     circle.setBrush(QBrush(QColor(vertex_colors[2])))
+                    row_vertices.append(('T2', circle))
 
                 # 1-in 3-out
                 elif ([left, right, top, bottom] == ['←', '→', '↓', '↓'] or
                       [left, right, top, bottom] == ['←', '←', '↑', '↓'] or
                       [left, right, top, bottom] == ['←', '→', '↑', '↑'] or
                       [left, right, top, bottom] == ['→', '→', '↑', '↓']):
-                    row_vertices.append(('T3.1', vertex_colors[3]))
                     circle.setPen(QPen(QColor(vertex_colors[3])))
                     circle.setBrush(QBrush(QColor(vertex_colors[3])))
+                    row_vertices.append(('T3.1', circle))
 
                 # 3-in 1-out
                 elif ([left, right, top, bottom] == ['→', '←', '↑', '↑'] or
                       [left, right, top, bottom] == ['→', '→', '↓', '↑'] or
                       [left, right, top, bottom] == ['→', '←', '↓', '↓'] or
                       [left, right, top, bottom] == ['←', '←', '↓', '↑']):
-                    row_vertices.append(('T3.2', vertex_colors[4]))
                     circle.setPen(QPen(QColor(vertex_colors[4])))
                     circle.setBrush(QBrush(QColor(vertex_colors[4])))
+                    row_vertices.append(('T3.2', circle))
 
                 # all-out
                 elif [left, right, top, bottom] == ['←', '→', '↑', '↓']:
-                    row_vertices.append(('T4.1', vertex_colors[5]))
                     circle.setPen(QPen(QColor(vertex_colors[5])))
                     circle.setBrush(QBrush(QColor(vertex_colors[5])))
+                    row_vertices.append(('T4.1', circle))
 
                 # all-in
                 elif [left, right, top, bottom] == ['←', '→', '↑', '↓']:
-                    row_vertices.append(('T4.1', vertex_colors[6]))
                     circle.setPen(QPen(QColor(vertex_colors[6])))
                     circle.setBrush(QBrush(QColor(vertex_colors[6])))
+                    row_vertices.append(('T4.1', circle))
                 
                 mfm_view.addItem(circle)
+            self.vertices.append(row_vertices)
 
 
+    def show_vertices(self):
+        """
+        Allows user to toggle visibility of vertex markers once they have been evaluated.
+        """
+        if self.vertices is not None:
+            for circle in [vertex[1] for vertex_row in self.vertices for vertex in vertex_row]:
+                circle.setVisible(self.params['Show vertices'].value)
+        else:
+            # self.params['Show vertices'].set_value(False) # Check if this won't create infinite loop
+            self.params['Latest error'].set_value('Evaluate vertices first')
 
+    def show_arrows(self):
+        """
+        Allows user to toggle visibility of arrow markers once they have been generated.
+        """
+        if len(self.text_items) != 0:
+            for text in [text_item for bar_cat in self.text_items for bar_row in bar_cat for text_item in bar_row]:
+                text.setVisible(self.params['Show arrows'].value)
+        else:
+            # self.params['Show arrows'].set_value(False)
+            self.params['Latest error'].set_value('Generate arrows first')
 
 
 def main():
