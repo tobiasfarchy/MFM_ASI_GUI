@@ -211,15 +211,15 @@ class ScanView(fv.FileView):
                             all_bars[row, 2*(j+1) - 1] = empty_val # Empty space for vertex
                             all_bars[row, 2*(j+1)] = self.v_options.index(text.getText()) + 0.5 # 0.5 to mark ybars vs xbars
 
+                fname = (self.params['Filename'].value +
+                  f"_rot{self.params['Rotation'].value}")
+                np.savetxt(fname + '_config.csv', np.flip(np.flip(all_bars, axis=0), axis =1), delimiter=',', fmt='%s')
+
             else:
                 self.params['Latest error'].set_value('Generate checkerboard first')
 
             # if 'saved_scans' not in os.listdir(os.getcwd()):
             #     os.mkdir(os.getcwd() + '//saved_scans')
-            fname = (self.params['Filename'].value +
-                  f"_rot{self.params['Rotation'].value}")
-            # save_config_helper((xbars, ybars), fname)
-            np.savetxt(fname + '_config.csv', np.flip(np.flip(all_bars, axis=0), axis =1), delimiter=',', fmt='%s')
 
         @pzp.action.define(self, "Load Configuration")
         def load_config(self):
@@ -228,17 +228,16 @@ class ScanView(fv.FileView):
             filePath, _ = QFileDialog.getOpenFileName(self, "Select File", "",
                                                       "All Files (*);;Text Files (*.txt)", options=options)
             if filePath:
-                xbars = np.load(filePath[:-len('xbars_npy')] + 'xbars.npy', allow_pickle = False)
-                ybars = np.load(filePath[:-len('xbars_npy')] + 'ybars.npy', allow_pickle = False)
-    
-                for i in range(min(len(xbars), len(ybars))):
-                    for j in range(len(xbars[0])):
-                        self.combos[2*i][j].setCurrentIndex(xbars[i][j])
-                    for j in range(len(ybars[0])):
-                        self.combos[2*i + 1][j].setCurrentIndex(ybars[i][j])
-                if len(xbars) > len(ybars):
-                    for j in range(len(xbars[0])):
-                        self.combos[-1][j].setCurrentIndex(xbars[-1][j])
+                checkerboard = np.flip(np.flip(np.loadtxt(filePath, delimiter = ','), axis = 1), axis = 0)
+                for i, row in enumerate(checkerboard):
+                    if i % 2 == 0: # xbars
+                        row_states = [self.h_options[int(state_index)] for state_index in [elem for elem in row if elem is not None]]
+                        for text_item, state in zip([self.text_items[0][int(i/2), row_states]]):
+                            text_item.customSetText(state)
+                    else: #ybars
+                        row_states = [self.v_options[int(state_index)] for state_index in [elem for elem in row if elem is not None]]
+                        for text_item, state in zip([self.text_items[1][int(i/2)], row_states]):
+                            text_item.customSetText(state)
 
         @pzp.action.define(self, "Evaluate vertices")
         def evaluate_vertices(self):
