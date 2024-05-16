@@ -16,13 +16,12 @@ import pyqtgraph as pg
 from functools import partial as fpartial
 from cv2 import getRotationMatrix2D, warpAffine
 from scipy.signal import find_peaks
-from PyQt5.QtWidgets import QApplication, QFileDialog, QComboBox, QGraphicsProxyWidget, QGraphicsRectItem
-from PyQt5.QtGui import QBrush, QColor, QPainter
+from PyQt5.QtWidgets import QApplication, QFileDialog, QComboBox, QGraphicsProxyWidget, QGraphicsRectItem, QGraphicsEllipseItem
+from PyQt5.QtGui import QBrush, QColor, QPainter, QPen
 from PyQt5.QtCore import QRectF, Qt
 from MFM_read_toolkit import square_lattice_bars
 
-combo_colors = ['darkRed','darkBlue', 'darkGreen', 'darkYellow', 'black']
-
+vertex_colors = ['red', 'green', 'dodgerblue', 'yellow', 'orange', 'purple', 'darkblue']
 def save_config_helper(bars, filename):
     np.save(filename + '_xbars.npy', np.array(bars[0]), allow_pickle = False)
     np.save(filename + '_ybars.npy', np.array(bars[1]), allow_pickle = False)
@@ -40,14 +39,14 @@ def clean_peaks(data_raw, quant = 0.8, dist: int = 8):
     peak_i, peak_h = find_peaks(data, height = (np.quantile(data, quant), np.max(data) + 1.), distance = dist)
     return peak_i
 
-class RectItem(QGraphicsRectItem):
-    def paint(self, painter, option, widget=None):
-        super(RectItem, self).paint(painter, option, widget)
-        painter.save()
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setBrush(Qt.darkRed)
-        painter.drawRect(option.rect)
-        painter.restore()
+# class RectItem(QGraphicsRectItem):
+#     def paint(self, painter, option, widget=None):
+#         super(RectItem, self).paint(painter, option, widget)
+#         painter.save()
+#         painter.setRenderHint(QPainter.Antialiasing)
+#         painter.setBrush(Qt.cyan)
+#         painter.drawRect(option.rect)
+#         painter.restore()
 
 class CustomTextItem(pg.TextItem):
     sigClicked = pg.Qt.QtCore.Signal(object)
@@ -100,9 +99,11 @@ class ScanView(fv.FileView):
     
             # Predict SI dimensions
             vrtx_coords, vrtx_img, (xbars_img, ybars_img) = square_lattice_bars(self.rot_AFM, self.rot_MFM, x, y)
+            self.vrtx_coords = vrtx_coords
             self.ASI_shape = vrtx_coords.shape[:1]
-            h_bar_width = (vrtx_coords[1, 0, 1] - vrtx_coords[0, 0, 1])/4
-            v_bar_width = (vrtx_coords[0, 1, 0] - vrtx_coords[0, 0, 0])/4
+            h_bar_width = (vrtx_coords[1, 0, 1] - vrtx_coords[0, 0, 1])/3
+            v_bar_width = (vrtx_coords[0, 1, 0] - vrtx_coords[0, 0, 0])/3
+            self.bar_width = (h_bar_width + h_bar_width)/2
 
             x_boxes = []
             y_boxes = []
@@ -121,7 +122,7 @@ class ScanView(fv.FileView):
                         # Build the ROI box
                         h_box = pg.RectROI([vrtx_coords[row, col, 0], (vrtx_coords[row, col, 1] + vrtx_coords[row, col + 1, 1])/2 - h_bar_width/2],
                                            [vrtx_coords[row, col + 1, 0] - vrtx_coords[row, col, 0], h_bar_width],
-                                            pen = pg.mkPen(None),
+                                            pen = 'cyan',
                                             movable = False)
                         
                         # Build the bar
@@ -142,12 +143,13 @@ class ScanView(fv.FileView):
                         h_state.sigClicked.connect(fpartial(self.h_switch_state, h_state, h_box))
 
                         row_x_boxes.append(h_box)
+                        h_box.setVisible(False)
                         row_x_bars.append(h_state)
 
                     if row < len(vrtx_coords) - 1:
                         v_box = pg.RectROI([(vrtx_coords[row, col, 0] + vrtx_coords[row + 1, col, 0])/2 - v_bar_width/2, vrtx_coords[row, col, 1]],
                                            [v_bar_width, vrtx_coords[row + 1, col, 1] - vrtx_coords[row, col, 1]],
-                                           pen = pg.mkPen(None),
+                                           pen = 'cyan',
                                            movable = False)
                         
                         # Build the bar
@@ -167,6 +169,7 @@ class ScanView(fv.FileView):
                         v_state.sigClicked.connect(fpartial(self.v_switch_state, v_state, v_box))
 
                         row_y_boxes.append(v_box)
+                        v_box.setVisible(False)
                         row_y_bars.append(v_state)
 
                 x_boxes.append(row_x_boxes)
@@ -236,6 +239,10 @@ class ScanView(fv.FileView):
                 if len(xbars) > len(ybars):
                     for j in range(len(xbars[0])):
                         self.combos[-1][j].setCurrentIndex(xbars[-1][j])
+
+        @pzp.action.define(self, "Evaluate vertices")
+        def evaluate_vertices(self):
+            self.build_vertices()
             
     def custom_layout(self):
         main_layout = pg.QtWidgets.QGridLayout()
@@ -260,12 +267,15 @@ class ScanView(fv.FileView):
         layout.addWidget(iv1, 0, 0, 2, 1)
         line_v = pg.InfiniteLine(pos = 0, angle=90, movable=True)
         line_h = pg.InfiniteLine(pos = 0, angle=0, movable=True)
+        crosshair = pg.TargetItem(symbol = '+', pen='b', movable=False)
         iv1.getView().addItem(line_v) #change pos to be in middle?
         iv1.getView().addItem(line_h)
+        iv1.getView().addItem(crosshair)
         self.line_v = pg.InfiniteLine(angle=90, movable=True)
         self.line_h = pg.InfiniteLine(angle=0, movable=True)
         self.line_v = line_v
         self.line_h = line_h
+        self.crosshair = crosshair
 
         
         # Full illumination spectrum view
@@ -278,7 +288,9 @@ class ScanView(fv.FileView):
         iv2.getView().setYLink(iv1.getView())
         iv2.getView().setXLink(iv1.getView())
         layout.addWidget(iv2, 0, 1, 2, 1) # adds to row 1, col 0
-                
+        
+        iv2.scene.sigMouseMoved.connect(self.move_clone_target)
+
         return main_layout
 
     def set_file(self, filename=None):
@@ -396,16 +408,14 @@ class ScanView(fv.FileView):
         state_index = self.v_options.index(text.getText())
         text.customSetText(self.v_options[(state_index + 1) % len(self.v_options)])
         text.setColor(self.colors[(state_index + 1) % len(self.v_options)])
-        text.update()
-        box.setPen('darkRed')
+        box.setVisible(True)
 
     def h_switch_state(self, text, box):
         state_index = self.h_options.index(text.getText())
         new_index = (state_index + 1) % len(self.h_options)
         text.customSetText(self.h_options[new_index])
         text.setColor(self.colors[new_index])
-        text.update()
-        box.setPen('darkRed')
+        box.setVisible(True)
 
     def arrow_size(self):
         for text_item in [item for item_cat in self.text_items for item_row in item_cat for item in item_row]:
@@ -413,7 +423,80 @@ class ScanView(fv.FileView):
             font.setPointSize(self.params['Arrow point size'].value)  # Adjust scaling factor as needed
             text_item.setFont(font)
 
+    def move_clone_target(self, pos):
+        """
+        Manages the synchronisation between mouse movement in the MFM ImageView and the crosshair movement in the AFM ImageView.
+        """
 
+        # Map positon of mouse to imageview1
+        mapped_pos = self.iv1.getImageItem().mapFromScene(pos)
+
+        # Update position of target in imageview1
+        self.crosshair.setPos(mapped_pos)
+
+    def build_vertices(self):
+        self.vertices = []
+        mfm_view = self.iv2.getView()
+        for row in range(len(self.text_items[1]) - 1): # number of inner vertex rows is len(ybars) - 1
+            row_vertices = []
+            for col in range(len(self.text_items[0][0]) - 1): # number of innver vertex cols is len(xbars[0]) - 1
+                left, right = self.text_items[0][row + 1][col].getText(), self.text_items[0][row + 1][col + 1].getText()
+                top, bottom = self.text_items[1][row][col + 1].getText(), self.text_items[1][row + 1][col + 1].getText()
+
+                xbar_macro_check = [bar_mag in ['←', '→'] for bar_mag in [left, right]]
+                ybar_macro_check = [bar_mag in ['↑', '↓'] for bar_mag in [top, bottom]]
+
+                circle = QGraphicsEllipseItem(float(self.vrtx_coords[row + 1][col + 1][0]), float(self.vrtx_coords[row + 1][col + 1][1]), self.bar_width/4, self.bar_width/4)
+                if not all(xbar_macro_check + ybar_macro_check):
+                    row_vertices.append(('U', vertex_colors[0]))
+                    circle.setPen(QPen(QColor(vertex_colors[0])))
+                    circle.setBrush(QBrush(QColor(vertex_colors[0])))
+
+                elif ([left, right, top, bottom] == ['←', '→', '↓', '↑'] or
+                      [left, right, top, bottom] == ['→', '←', '↑', '↓']):
+                    row_vertices.append(('T1', vertex_colors[1]))
+                    circle.setPen(QPen(QColor(vertex_colors[1])))
+                    circle.setBrush(QBrush(QColor(vertex_colors[1])))
+
+                elif ([left, right, top, bottom] == ['→', '→', '↑', '↑'] or
+                      [left, right, top, bottom] == ['→', '→', '↓', '↓'] or
+                      [left, right, top, bottom] == ['←', '←', '↑', '↑'] or
+                      [left, right, top, bottom] == ['←', '←', '↓', '↓']):
+                    row_vertices.append(('T2', vertex_colors[2]))
+                    circle.setPen(QPen(QColor(vertex_colors[2])))
+                    circle.setBrush(QBrush(QColor(vertex_colors[2])))
+
+                # 1-in 3-out
+                elif ([left, right, top, bottom] == ['←', '→', '↓', '↓'] or
+                      [left, right, top, bottom] == ['←', '←', '↑', '↓'] or
+                      [left, right, top, bottom] == ['←', '→', '↑', '↑'] or
+                      [left, right, top, bottom] == ['→', '→', '↑', '↓']):
+                    row_vertices.append(('T3.1', vertex_colors[3]))
+                    circle.setPen(QPen(QColor(vertex_colors[3])))
+                    circle.setBrush(QBrush(QColor(vertex_colors[3])))
+
+                # 3-in 1-out
+                elif ([left, right, top, bottom] == ['→', '←', '↑', '↑'] or
+                      [left, right, top, bottom] == ['→', '→', '↓', '↑'] or
+                      [left, right, top, bottom] == ['→', '←', '↓', '↓'] or
+                      [left, right, top, bottom] == ['←', '←', '↓', '↑']):
+                    row_vertices.append(('T3.2', vertex_colors[4]))
+                    circle.setPen(QPen(QColor(vertex_colors[4])))
+                    circle.setBrush(QBrush(QColor(vertex_colors[4])))
+
+                # all-out
+                elif [left, right, top, bottom] == ['←', '→', '↑', '↓']:
+                    row_vertices.append(('T4.1', vertex_colors[5]))
+                    circle.setPen(QPen(QColor(vertex_colors[5])))
+                    circle.setBrush(QBrush(QColor(vertex_colors[5])))
+
+                # all-in
+                elif [left, right, top, bottom] == ['←', '→', '↑', '↓']:
+                    row_vertices.append(('T4.1', vertex_colors[6]))
+                    circle.setPen(QPen(QColor(vertex_colors[6])))
+                    circle.setBrush(QBrush(QColor(vertex_colors[6])))
+                
+                mfm_view.addItem(circle)
 
 
 
