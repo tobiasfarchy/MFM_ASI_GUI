@@ -194,7 +194,7 @@ class ScanView(fv.FileView):
             else:
                 self.params['Latest error'].set_value('Generate checkerboard first')
         
-        @pzp.action.define(self, "Save Configuration ")
+        @pzp.action.define(self, "Save Configuration")
         def save_config(self):
             if len(self.text_items) > 0:
                 empty_val = None
@@ -451,7 +451,11 @@ class ScanView(fv.FileView):
                 xbar_macro_check = [bar_mag in ['←', '→'] for bar_mag in [left, right]]
                 ybar_macro_check = [bar_mag in ['↑', '↓'] for bar_mag in [top, bottom]]
 
-                circle = QGraphicsEllipseItem(float(self.vrtx_coords[row + 1][col + 1][0]), float(self.vrtx_coords[row + 1][col + 1][1]), self.bar_width/4, self.bar_width/4)
+                circle_rad = 2*self.bar_width
+                circle = QGraphicsEllipseItem(float(self.vrtx_coords[row + 1][col + 1][0]) - circle_rad/2,
+                                              float(self.vrtx_coords[row + 1][col + 1][1]) - circle_rad/2,
+                                              circle_rad,
+                                              circle_rad)
                 if not all(xbar_macro_check + ybar_macro_check):
                     row_vertices.append(('U', vertex_colors[0]))
                     circle.setPen(QPen(QColor(vertex_colors[0])))
