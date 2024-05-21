@@ -220,7 +220,7 @@ class ManyFilesViewer(QtWidgets.QWidget):
         dialog = QtWidgets.QDialog(self)
         layout2 = QtWidgets.QVBoxLayout()
         dialog.setLayout(layout2)
-
+ 
         file_view = self.file_viewer(override_param_layout=False)
         file_view.setStyleSheet("QGroupBox {border:0;}")
         layout2.addWidget(file_view)
