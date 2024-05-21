@@ -2,7 +2,7 @@
 """
 @author: tfarchy
 
-Packages to install: python -m pip install puzzlepiece numpy pyqtgraph opencv-python scipy PyQt5 matplotlib
+Packages to install: python -m pip install puzzlepiece numpy pyqtgraph opencv-python scipy PyQt5 matplotlib imageio scipy
 """
 
 import file_viewer as fv
@@ -16,10 +16,13 @@ import pyqtgraph as pg
 from functools import partial as fpartial
 from cv2 import getRotationMatrix2D, warpAffine
 from scipy.signal import find_peaks
-from PyQt5.QtWidgets import QApplication, QFileDialog, QComboBox, QGraphicsProxyWidget, QGraphicsRectItem, QGraphicsEllipseItem
+from PyQt5.QtWidgets import QApplication, QFileDialog, QGraphicsEllipseItem, QTreeWidgetItem, QTreeWidget, QPushButton
 from PyQt5.QtGui import QBrush, QColor, QPainter, QPen
 from PyQt5.QtCore import QRectF, Qt
 from MFM_read_toolkit import square_lattice_bars
+import imageio.v3 as iio
+from scipy.ndimage import zoom
+
 
 vertex_colors = ['red', 'green', 'dodgerblue', 'yellow', 'orange', 'purple', 'darkblue']
 def save_config_helper(bars, filename):
@@ -81,10 +84,6 @@ class ScanView(fv.FileView):
         arrows = pzp.param.checkbox(self, "Show arrows", False)(None)
         mfm_boxes = pzp.param.checkbox(self, "Highlight arrow changes", True)(None)
         mask = pzp.param.checkbox(self, 'Show mask')(None)
-        mask_xstretch = pzp.param.spinbox(self, 'Mask x-stretch', 1.0)(None)
-        mask_ystretch = pzp.param.spinbox(self 'Mask y-stretch', 1.0)(None)
-        mask_x = pzp.param.spinbox(self, 'Mask x position', 1.0)(None)
-        mask_y = pzp.param.spinbox(self 'Mask y position', 1.0)(None)
         rot.changed.connect(self.rot_image)
         size.changed.connect(self.arrow_size)
         view_link.changed.connect(self.image_view_link)
@@ -93,11 +92,6 @@ class ScanView(fv.FileView):
         arrows.changed.connect(self.show_arrows)
 
         mask.changed.connect(self.show_mask)
-
-        mask_xstretch.changed.connect(self.adjust_mask)
-        mask_ystretch.changed.connect(self.adjust_mask)
-        mask_x.changed.connect(self.adjust_mask)
-        mask_x.changed.connect(self.adjust_mask)
 
         pzp.param.readout(self, 'Latest error')(None)
         self.mfm_view = None # MFM window ROI stored here
@@ -261,28 +255,8 @@ class ScanView(fv.FileView):
                         for text_item, state_index in zip(self.text_items[1][int(i/2)], row_states):
                             text_item.customSetText(self.v_options[state_index])
                             text_item.setColor(self.colors[state_index])
-
-        @pzp.action.define(self, "Load mask")
-        def load_mask(self):
-            # Make sure ViewBox is clear
-            if self.vertices is not None:
-                self.params['Show vertices'].set_value(False)
-                self.show_vertices()
-            if len(self.text_items) != 0:
-                self.params['Show arrows'].set_value(False)
-                self.show_arrows()
-            if self.mfm_boxes is not None:
-                self.params['Highlight arrow changes'].set_value(False)
-                self.show_all_bars()
-            
-            options = QFileDialog.Options()
-            filePath, _ = QFileDialog.getOpenFileName(self, "Select File", "",
-                                                      "All Files (*);;Text Files (*.txt)", options=options)
             
             
-            
-
-
         @pzp.action.define(self, "Evaluate vertices")
         def evaluate_vertices(self):
             self.build_vertices()
@@ -332,7 +306,41 @@ class ScanView(fv.FileView):
         iv2.getView().setXLink(iv1.getView())
         layout.addWidget(iv2, 0, 1, 2, 1) # adds to row 1, col 0
         
+        # Adding buttons and inputs to row 1 col 0
+        tree = QTreeWidget()
+        layout.addWidget(1, 0, 1, 1)
+        item = QTreeWidgetItem(tree)
+        # Overlay mask button
+        # widget_button = QWidget()
+        # layout_button = QHBoxLayout()
+        # widget.setLayout(layout)
+        mask_button = QPushButton("Overlay Mask")
+        mask_button.clicked.connect(self.overlay_mask)
+        item.addWidget(mask_button)
+        # Number inputs
+        mask_input_keys = [['Mask x-stretch', 1.0], ['Mask y-stretch', 1.0],
+                           ['Mask x-position', 0.0], ['Mask y-position', 0.0]]
+        mask_inputs = [pzp.param.spinbox(self, key[0], init)(None) for (key, init) in mask_input_keys]
+        for i, (key, init) in enumerate(mask_input_keys):
+            tree.setItemWidget(item, i + 2, self.params[key])
+        
+        self.iv3 = iv3 = pg.ImageView()
+        # Hide the ROI button
+        iv3.ui.roiBtn.hide()
+        # Hide the Menu button
+        iv3.ui.menuBtn.hide()
+        iv3.setColorMap(pg.colormap.get('afmhot', source = 'matplotlib'))
+        iv3.getView().setYLink(iv1.getView())
+        iv3.getView().setXLink(iv1.getView())
+        layout.addWidget(iv3, 1, 1, 1, 1) # adds to row 1, col 0
+        
+        # Connect all mask controls
+        for mask_input in mask_inputs:
+            mask_input.changed.connect(self.adjust_mask)
+
+        # Connect clone target
         iv2.scene.sigMouseMoved.connect(self.move_clone_target)
+        iv3.scene.sigMouseMoved.connect(self.move_clone_target)
 
         return main_layout
 
@@ -372,6 +380,56 @@ class ScanView(fv.FileView):
         # Update images in GUI
         self.iv1.setImage(self.rot_AFM.T)
         self.iv2.setImage(self.rot_MFM.T)
+        self.iv3.setImage(self.rot_MFM.T)
+    
+    def overlay_mask(self):
+        options = QFileDialog.Options()
+        filePath, _ = QFileDialog.getOpenFileName(self, "Select File", "",
+                                                      "All Files (*);;Text Files (*.txt)", options=options)
+        if filePath:
+            mask = iio.imread(filePath)
+
+            # Correct for DMD stretching
+            zoom_factors = (1, 0.5, 1) if mask.ndim == 3 else (1, 0.5)
+            self.mask = zoom(mask.T, zoom_factors, order = 3)
+
+            self.transformed_mask = self.transform_mask()
+            self.mask_item = pg.ImageItem(self.mask)
+            self.mask_item.setOpacity(0.5)
+            self.iv3.setImage(self.mask_item)
+
+    def transform_mask(self):
+        """
+        Transforms the given 2D numpy array by shifting and stretching it.
+        """
+        if self.mask is not None:
+            # Get the shape of the original image
+            original_shape = self.mask.shape
+            
+            # Create the transformation matrix for scaling (stretching)
+            # scale_matrix = np.array([
+            #     [1/self.params['Mask x-stretch'].value, 0, 0],
+            #     [0, 1/self.params['Mask y-stretch'].value, 0],
+            #     [0, 0, 1]
+            # ])
+            scale_matrix = np.array([[1/self.params['Mask x-stretch'].value, 0],
+                                    [0, 1/self.params['Mask y-stretch'].value]])
+
+            view_x, view_y = 
+
+            
+            # Create the offset for shifting
+            offset = np.array([self.params['Mask x-position'].value * 0.5 * view_x,
+                            self.params['Mask y-position'].value * 0.5 * view_y])
+            
+            # Apply the affine transformation
+            transformed_image = affine_transform(image, scale_matrix[:2, :2], offset=offset, output_shape=original_shape, order=1, mode='constant', cval=0.0)
+            
+            # Crop the image to the original size (if necessary)
+            transformed_image = transformed_image[:original_shape[0], :original_shape[1]]
+            
+            self.iv3.removeItem(self.mask_item)
+
 
     def image_view_link(self):
         """ 
