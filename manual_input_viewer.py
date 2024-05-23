@@ -22,9 +22,11 @@ from PyQt5.QtCore import QRectF, Qt
 from MFM_read_toolkit import square_lattice_bars
 import imageio.v3 as iio
 from scipy.ndimage import zoom, affine_transform
+import matplotlib.pyplot as plt
 
 
 vertex_colors = ['red', 'green', 'dodgerblue', 'yellow', 'orange', 'purple', 'darkblue']
+
 def save_config_helper(bars, filename):
     np.save(filename + '_xbars.npy', np.array(bars[0]), allow_pickle = False)
     np.save(filename + '_ybars.npy', np.array(bars[1]), allow_pickle = False)
@@ -110,6 +112,7 @@ class ScanView(fv.FileView):
         self.h_options = ['U', '←', '→']
         self.v_options = ['U', '↑', '↓']
         self.colors = ['r', 'b', 'g']
+        self.vrtx_options = ['U', 'T1', 'T2_og', 'T2', 'T3.1', 'T3.2', 'T4.1', 'T4.1']
 
     def define_actions(self):
         @pzp.action.define(self, "Generate ASI Input")
@@ -315,26 +318,6 @@ class ScanView(fv.FileView):
         iv2.getView().setYLink(iv1.getView())
         iv2.getView().setXLink(iv1.getView())
         layout.addWidget(iv2, 0, 1, 1, 1) # adds to row 1, col 0
-        
-        # Adding buttons and inputs to row 1 col 0
-        # tree = QTreeWidget()
-        # layout.addWidget(tree, 1, 0, 1, 1)
-        # item = QTreeWidgetItem(tree)
-        # # Overlay mask button
-        # widget_button = QWidget()
-        # layout_button = QHBoxLayout()
-        # widget_button.setLayout(layout_button)
-        # mask_button = QPushButton("Overlay Mask")
-        # mask_button.clicked.connect(self.overlay_mask)
-        # layout_button.addWidget(mask_button)
-        # tree.setItemWidget(item, 1, widget_button)
-        # # Number inputs
-        # mask_input_keys = [['Mask x-stretch', 1.0], ['Mask y-stretch', 1.0],
-        #                    ['Mask x-position', 0.0], ['Mask y-position', 0.0]]
-        # mask_inputs = [pzp.param.spinbox(self, key[0], init)(None) for (key, init) in mask_input_keys]
-        # for i, (input_widget, (key, init)) in enumerate(zip(mask_inputs, mask_input_keys)):
-        #     self.params[key] = input_widget
-        #     tree.setItemWidget(item, i + 2, self.params[key])
 
         #Create mask overlay title for row 1 col 0
         title_row = QHBoxLayout()
@@ -388,6 +371,11 @@ class ScanView(fv.FileView):
             input.valueChanged.connect(self.update_mask)
             self.params[key] = input
         
+        # Add button to evaluate statistics
+        statistics_button = QPushButton("Evaluate Statistics")
+        statistics_button.clicked.connect(self.statistics_output)
+        mask_layout.addWidget(statistics_button)
+
         # Add mask layout to grid sublayout
         layout.addLayout(mask_layout, 1, 0)
         
@@ -516,14 +504,14 @@ class ScanView(fv.FileView):
 
     def update_mask(self):
         if self.mask is not None:
-            transformed_mask = self._transform_mask()
+            self.transformed_mask = self._transform_mask()
 
             # Remove existing mask
             if self.mask_item is not None:
                 self.iv3.removeItem(self.mask_item)
 
             # Add new mask
-            self.mask_item = pg.ImageItem(transformed_mask)
+            self.mask_item = pg.ImageItem(self.transformed_mask)
             self.mask_item.setOpacity(0.5)
             self.iv3.addItem(self.mask_item) # ERRORS HERE 
 
@@ -639,17 +627,21 @@ class ScanView(fv.FileView):
                 xbar_macro_check = [bar_mag in ['←', '→'] for bar_mag in [left, right]]
                 ybar_macro_check = [bar_mag in ['↑', '↓'] for bar_mag in [top, bottom]]
 
-                circle = QGraphicsEllipseItem(float(self.vrtx_coords[row + 1][col + 1][0]), float(self.vrtx_coords[row + 1][col + 1][1]), self.bar_width/4, self.bar_width/4)
+                circle = QGraphicsEllipseItem(float(self.vrtx_coords[row + 1][col + 1][0]),
+                                              float(self.vrtx_coords[row + 1][col + 1][1]),
+                                              self.bar_width,
+                                              self.bar_width)
+                
                 if not all(xbar_macro_check + ybar_macro_check):
                     circle.setPen(QPen(QColor(vertex_colors[0])))
                     circle.setBrush(QBrush(QColor(vertex_colors[0])))
-                    row_vertices.append(('U', circle))
+                    row_vertices.append((self.vrtx_options[0], circle))
 
                 elif ([left, right, top, bottom] == ['←', '→', '↓', '↑'] or
                       [left, right, top, bottom] == ['→', '←', '↑', '↓']):
                     circle.setPen(QPen(QColor(vertex_colors[1])))
                     circle.setBrush(QBrush(QColor(vertex_colors[1])))
-                    row_vertices.append(('T1', circle))
+                    row_vertices.append((self.vrtx_options[1], circle))
 
 
                 elif ([left, right, top, bottom] == ['→', '→', '↑', '↑'] or
@@ -658,7 +650,17 @@ class ScanView(fv.FileView):
                       [left, right, top, bottom] == ['←', '←', '↓', '↓']):
                     circle.setPen(QPen(QColor(vertex_colors[2])))
                     circle.setBrush(QBrush(QColor(vertex_colors[2])))
-                    row_vertices.append(('T2', circle))
+                    # Testing if configuration is the same as before writing
+                    if [left, right, top, bottom] == [self.h_options[self.params["Default x-bar saturation: ← = 1 or → = 2"].value],
+                                                      self.h_options[self.params["Default x-bar saturation: ← = 1 or → = 2"].value],
+                                                      self.v_options[self.params["Default y-bar saturation: ↑ = 1 or ↓ = 2"].value],
+                                                      self.v_options[self.params["Default y-bar saturation: ↑ = 1 or ↓ = 2"].value]]:
+                        row_vertices.append((self.vrtx_options[2], circle))
+                    else:
+                        if (self.params["Default x-bar saturation: ← = 1 or → = 2"].value == 0 or
+                            self.params["Default y-bar saturation: ↑ = 1 or ↓ = 2"].value == 0):
+                            self.params["Latest error"].set_value("No default saturation. Statistics will be incomplete.")
+                        row_vertices.append((self.vrtx_options[3], circle))
 
                 # 1-in 3-out
                 elif ([left, right, top, bottom] == ['←', '→', '↓', '↓'] or
@@ -667,7 +669,7 @@ class ScanView(fv.FileView):
                       [left, right, top, bottom] == ['→', '→', '↑', '↓']):
                     circle.setPen(QPen(QColor(vertex_colors[3])))
                     circle.setBrush(QBrush(QColor(vertex_colors[3])))
-                    row_vertices.append(('T3.1', circle))
+                    row_vertices.append((self.vrtx_options[4], circle))
 
                 # 3-in 1-out
                 elif ([left, right, top, bottom] == ['→', '←', '↑', '↑'] or
@@ -676,19 +678,19 @@ class ScanView(fv.FileView):
                       [left, right, top, bottom] == ['←', '←', '↓', '↑']):
                     circle.setPen(QPen(QColor(vertex_colors[4])))
                     circle.setBrush(QBrush(QColor(vertex_colors[4])))
-                    row_vertices.append(('T3.2', circle))
+                    row_vertices.append((self.vrtx_options[5], circle))
 
                 # all-out
                 elif [left, right, top, bottom] == ['←', '→', '↑', '↓']:
                     circle.setPen(QPen(QColor(vertex_colors[5])))
                     circle.setBrush(QBrush(QColor(vertex_colors[5])))
-                    row_vertices.append(('T4.1', circle))
+                    row_vertices.append((self.vrtx_options[6], circle))
 
                 # all-in
                 elif [left, right, top, bottom] == ['←', '→', '↑', '↓']:
                     circle.setPen(QPen(QColor(vertex_colors[6])))
                     circle.setBrush(QBrush(QColor(vertex_colors[6])))
-                    row_vertices.append(('T4.1', circle))
+                    row_vertices.append((self.vrtx_options[7], circle))
                 
                 mfm_view.addItem(circle)
             self.vertices.append(row_vertices)
@@ -714,6 +716,111 @@ class ScanView(fv.FileView):
         else:
             # self.params['Show arrows'].set_value(False)
             self.params['Latest error'].set_value('Generate arrows first')
+
+    def statistics_output(self):
+        if self.vertices is not None and self.mask is not None:
+            ## VERTICES
+            written_vertices = []
+            for row in range(len(self.text_items[1]) - 1): # number of inner vertex rows is len(ybars) - 1
+                for col in range(len(self.text_items[0][0]) - 1): # number of innver vertex cols is len(xbars[0]) - 1
+                    # Vertex position
+                    x, y = self.vrtx_coords[row + 1][col + 1][0], self.vrtx_coords[row + 1][col + 1][1]
+
+                    # If mask is dark in this area, save state for statistics
+                    if self.transformed_mask[x, y] < 127: # Flipped x and y here
+                        written_vertices.append(self.vertices[row][col][0])
+            
+            ## X ARROWS
+            written_x_arrows = []
+            x_arrows = self.text_items[0]
+            for row, row_arrows in enumerate(x_arrows):
+                for col, arrow in enumerate(row_arrows):
+                    # Bar middle position
+                    x, y = (int((self.vrtx_coords[row][col][0] + self.vrtx_coords[row][col + 1][0])/2),
+                            int((self.vrtx_coords[row][col][1] + self.vrtx_coords[row][col + 1][1])/2))
+                    
+                    # If mask is dark in this area, save state for statistics
+                    if self.transformed_mask[x, y] < 127: # Flipped x and y here
+                        written_x_arrows.append(arrow.getText())
+
+            ## Y ARROWS
+            written_y_arrows = []
+            y_arrows = self.text_items[1]
+            for row, row_arrows in enumerate(y_arrows):
+                for col, arrow in enumerate(row_arrows):
+                    # Bar middle position
+                    x, y = (int((self.vrtx_coords[row][col][0] + self.vrtx_coords[row + 1][col][0])/2),
+                            int((self.vrtx_coords[row][col][1] + self.vrtx_coords[row + 1][col][1])/2))
+                    
+                    # If mask is dark in this area, save state for statistics
+                    if self.transformed_mask[x, y] < 127: # Flipped x and y here
+                        written_y_arrows.append(arrow.getText())
+
+
+            ## CALCULATE STATISTICS
+            shifted_options = self.vrtx_options[1:] + [self.vrtx_options[0]] # Shifting undefined to the end for readability
+            vrtx_counts = []
+            for state in shifted_options:
+                vrtx_counts.append(written_vertices.count(state))
+            vrtx_freq = np.array(vrtx_counts)/np.sum(vrtx_counts)
+            
+            x_counts = []
+            for state in self.h_options:
+                x_counts.append(written_x_arrows.count(state))
+            x_og_num = x_counts.pop(self.params["Default x-bar saturation: ← = 1 or → = 2"].value)
+            x_flipped = x_counts[1]/(x_og_num + x_counts[1])
+            
+            y_counts = []
+            for state in self.v_options:
+                y_counts.append(written_y_arrows.count(state))
+            y_og_num = y_counts.pop(self.params["Default y-bar saturation: ↑ = 1 or ↓ = 2"].value)
+            y_flipped = y_counts[1]/(y_og_num + y_counts[1])
+
+            # vertex options: ['T1', 'T2_og', 'T2', 'T3.1', 'T3.2', 'T4.1', 'T4.1', 'U']
+            vrtx_freq_grouped = [vrtx_freq[0],
+                                 vrtx_freq[1] + vrtx_freq[2],
+                                 vrtx_freq[3] + vrtx_freq[4],
+                                 vrtx_freq[5] + vrtx_freq[6],
+                                 vrtx_freq[7]]
+            vrtx_out = [0, 0, vrtx_freq[3], vrtx_freq[5], 0]
+            vrtx_unwritten = [0, vrtx_freq[1], 0, 0, 0]
+
+            state_labels = []
+            for elem in shifted_options:
+                if elem[:2] not in state_labels:
+                    state_labels.append(elem[:2])
+
+            # Frequencies for thermal model
+            thermal_model = [2, 4, 8, 2, 0]
+            thermal_freq = np.array(thermal_model)/np.sum(thermal_model)
+
+            x = range(len(state_labels))
+            width = 0.35
+
+            fig, ax = plt.subplots()
+
+            filename = self.params["Filename"].value
+            for i, char in enumerate(filename):
+                if char == "/":
+                    cut = i
+
+            ax.bar(x, vrtx_freq_grouped, width, label = filename[cut + 1:cut + 21], color = 'blue')
+            ax.bar(x, vrtx_out, width, label = 'Out states', color = 'darkblue')
+            ax.bar(x, vrtx_unwritten, width, label = 'Unwritten states', color = 'g')
+            ax.bar([p + width for p in x], thermal_freq, width, label = 'Thermal model', color = 'red')
+
+            ax.set_xlabel('Vortex Type')
+            ax.set_ylabel('Frequency')
+            ax.set_xticks([p + width/2 for p in x])
+            ax.set_xticklabels(state_labels)
+            ax.legend()
+            ax.set_title(f"x-flip: {x_flipped*100: .2f}%  |  y-flip: {y_flipped*100: .2f}%")
+
+            plt.savefig(filename + '_statistics.png')
+            self.params['Latest error'].set_value('Statistics plot saved')
+
+        else:
+            self.params['Latest error'].set_value('Evaluate vertices and load mask first')
 
 
 def main():
