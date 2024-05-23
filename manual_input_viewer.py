@@ -54,15 +54,6 @@ def rotation_helper(img, rot):
 
     return rot_img
 
-# class RectItem(QGraphicsRectItem):
-#     def paint(self, painter, option, widget=None):
-#         super(RectItem, self).paint(painter, option, widget)
-#         painter.save()
-#         painter.setRenderHint(QPainter.Antialiasing)
-#         painter.setBrush(Qt.cyan)
-#         painter.drawRect(option.rect)
-#         painter.restore()
-
 class CustomTextItem(pg.TextItem):
     sigClicked = pg.Qt.QtCore.Signal(object)
 
@@ -99,18 +90,14 @@ class ScanView(fv.FileView):
         default_satx = pzp.param.spinbox(self, "Default x-bar saturation: ← = 1 or → = 2", 0)(None) 
         default_saty = pzp.param.spinbox(self, "Default y-bar saturation: ↑ = 1 or ↓ = 2", 0)(None)
         size = pzp.param.spinbox(self, "Arrow point size", 0)(None)
-        # view_link = pzp.param.checkbox(self, "AFM/MFM axis link", True)(None)
         vertices = pzp.param.checkbox(self, "Show vertices", False)(None)
         arrows = pzp.param.checkbox(self, "Show arrows", False)(None)
         mfm_boxes = pzp.param.checkbox(self, "Highlight arrow changes", True)(None)
-        # mask = pzp.param.checkbox(self, 'Show mask', False)(None)
         rot.changed.connect(self.rot_image)
         size.changed.connect(self.arrow_size)
-        # view_link.changed.connect(self.image_view_link)
         mfm_boxes.changed.connect(self.show_all_bars)
         vertices.changed.connect(self.show_vertices)
         arrows.changed.connect(self.show_arrows)
-        # mask.changed.connect(self.show_mask)
 
         pzp.param.readout(self, 'Latest error')(None)
         self.mfm_view = None # MFM window ROI stored here
@@ -446,7 +433,6 @@ class ScanView(fv.FileView):
         # Rotate images
         self.rot_image()
 
-
     def rot_image(self):
         """Rotate AFM and MFM images"""
         # height, width = self.img_AFM.shape[:2]
@@ -546,7 +532,6 @@ class ScanView(fv.FileView):
         else:
             self.params['Latest error'].set_value("Initialise mask first")
     
-
     def show_mask(self):
         """
         Manages toggling between displaying and hiding mask in bottom right AFM image.
@@ -559,46 +544,6 @@ class ScanView(fv.FileView):
                 self.mask_item.setOpacity(0)
         else:
             self.params["Latest error"].set_value("Initialise mask first")
-        # elif self.params["Overlay mask"].value:
-        #     # self.params["Latest error"].set_value("Initialise mask first")
-        #     options = QFileDialog.Options()
-        #     filePath, _ = QFileDialog.getOpenFileName(self, "Select File", "",
-        #                                                 "All Files (*);;Text Files (*.txt)", options=options)
-        #     if filePath:
-        #         mask = iio.imread(filePath)
-
-        #         # Correct for DMD stretching
-        #         zoom_factors = (1, 0.5, 1) if mask.ndim == 3 else (1, 0.5)
-        #         self.mask = zoom(mask.T, zoom_factors, order = 3)
-
-        #         self.transformed_mask = self.transform_mask()
-        #         self.mask_item = pg.ImageItem(self.transformed_mask)
-        #         self.mask_item.setOpacity(0.5)
-        #         self.iv3.setImage(self.mask_item)
-        #         # self.params["Overlay mask"].set_value(True)
-
-
-    # def image_view_link(self):
-    #     """ 
-    #     This method manages the implementation of the ' link' checkbox.
-    #     Either axes are linked or only MFM scrolls with the MFM view shown as a rectangular ROI in the AFM plot
-    #     """
-
-    #     viewbox2 = self.iv2.getView()
-    #     viewbox1 = self.iv1.getView() # change these
-    #     if self.params['AFM/MFM axis link'].value == True:
-    #         viewbox2.setYLink(viewbox1)
-    #         viewbox2.setXLink(viewbox1)
-    #         if self.mfm_view is not None:
-    #             viewbox1.removeItem(self.mfm_view)
-
-    #     else:
-    #         viewbox2.setYLink(None)
-    #         viewbox2.setXLink(None)
-    #         viewbox1.autoRange()
-    #         xrange, yrange = viewbox2.viewRange()
-    #         self.updateMFMView()
-    #         self.iv2.getView().sigRangeChanged.connect(self.updateMFMView)
 
     def updateMFMView(self):
         """ 
