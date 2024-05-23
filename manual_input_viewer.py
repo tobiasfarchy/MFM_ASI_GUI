@@ -814,7 +814,7 @@ class ScanView(fv.FileView):
             ax.set_xticks([p + width/2 for p in x])
             ax.set_xticklabels(state_labels)
             ax.legend()
-            ax.set_title(f"x-flip: {x_flipped*100: .2f}%  |  y-flip: {y_flipped*100: .2f}%")
+            ax.set_title(f"x-bars: {x_counts[1]} flipped, {x_og_num} not flipped ({x_flipped*100:.2f}%)\ny-bars: {y_counts[1]} flipped, {y_og_num} not flipped ({y_flipped*100:.2f}%)")
 
             plt.savefig(filename + '_statistics.png')
             self.params['Latest error'].set_value('Statistics plot saved')
