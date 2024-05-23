@@ -14,14 +14,14 @@ import os
 import sys
 import pyqtgraph as pg
 from functools import partial as fpartial
-from cv2 import getRotationMatrix2D, warpAffine
+from cv2 import getRotationMatrix2D, warpAffine, resize, INTER_CUBIC
 from scipy.signal import find_peaks
-from PyQt5.QtWidgets import QApplication, QFileDialog, QGraphicsEllipseItem, QTreeWidgetItem, QTreeWidget, QPushButton
+from PyQt5.QtWidgets import QApplication, QFileDialog, QGraphicsEllipseItem, QDoubleSpinBox, QTreeWidgetItem, QTreeWidget, QPushButton, QWidget, QHBoxLayout, QLabel, QVBoxLayout, QCheckBox
 from PyQt5.QtGui import QBrush, QColor, QPainter, QPen
 from PyQt5.QtCore import QRectF, Qt
 from MFM_read_toolkit import square_lattice_bars
 import imageio.v3 as iio
-from scipy.ndimage import zoom
+from scipy.ndimage import zoom, affine_transform
 
 
 vertex_colors = ['red', 'green', 'dodgerblue', 'yellow', 'orange', 'purple', 'darkblue']
@@ -41,6 +41,18 @@ def clean_peaks(data_raw, quant = 0.8, dist: int = 8):
     data = data_raw - fit[0]*ns - fit[1]
     peak_i, peak_h = find_peaks(data, height = (np.quantile(data, quant), np.max(data) + 1.), distance = dist)
     return peak_i
+
+def rotation_helper(img, rot):
+    height, width = img.shape[:2]
+    center = (int(width/2), int(height/2))
+
+    # Define rotation matrix
+    rot_matrix = getRotationMatrix2D(center, rot, 1)
+
+    # Rotate images according to rotation matrix
+    rot_img = warpAffine(img, rot_matrix, dsize = (height, width))
+
+    return rot_img
 
 # class RectItem(QGraphicsRectItem):
 #     def paint(self, painter, option, widget=None):
@@ -71,6 +83,14 @@ class CustomTextItem(pg.TextItem):
         super(CustomTextItem, self).mousePressEvent(event)  # Continue processing the parent class event
         event.accept()
 
+class CustomCheckBox(QCheckBox):
+    def __init__(self, init_value: bool = False):
+        super(QCheckBox, self).__init__()
+        self.setValue(init_value)
+    
+    def setValue(self, value):
+        self.setCheckState(value)
+        self.value = value
 
 class ScanView(fv.FileView):
     def define_params(self):
@@ -79,25 +99,26 @@ class ScanView(fv.FileView):
         default_satx = pzp.param.spinbox(self, "Default x-bar saturation: ← = 1 or → = 2", 0)(None) 
         default_saty = pzp.param.spinbox(self, "Default y-bar saturation: ↑ = 1 or ↓ = 2", 0)(None)
         size = pzp.param.spinbox(self, "Arrow point size", 0)(None)
-        view_link = pzp.param.checkbox(self, "AFM/MFM axis link", True)(None)
+        # view_link = pzp.param.checkbox(self, "AFM/MFM axis link", True)(None)
         vertices = pzp.param.checkbox(self, "Show vertices", False)(None)
         arrows = pzp.param.checkbox(self, "Show arrows", False)(None)
         mfm_boxes = pzp.param.checkbox(self, "Highlight arrow changes", True)(None)
-        mask = pzp.param.checkbox(self, 'Show mask')(None)
+        # mask = pzp.param.checkbox(self, 'Show mask', False)(None)
         rot.changed.connect(self.rot_image)
         size.changed.connect(self.arrow_size)
-        view_link.changed.connect(self.image_view_link)
+        # view_link.changed.connect(self.image_view_link)
         mfm_boxes.changed.connect(self.show_all_bars)
         vertices.changed.connect(self.show_vertices)
         arrows.changed.connect(self.show_arrows)
-
-        mask.changed.connect(self.show_mask)
+        # mask.changed.connect(self.show_mask)
 
         pzp.param.readout(self, 'Latest error')(None)
         self.mfm_view = None # MFM window ROI stored here
         self.multx, self.multy = 5, 2
         self.mfm_boxes = None # MFM bar boxes stored here
         self.vertices = None
+        self.mask = None
+        self.mask_item = None
         self.text_items = []
         self.h_options = ['U', '←', '→']
         self.v_options = ['U', '↑', '↓']
@@ -262,17 +283,19 @@ class ScanView(fv.FileView):
             self.build_vertices()
             
     def custom_layout(self):
-        main_layout = pg.QtWidgets.QGridLayout()
+        main_layout = pg.QtWidgets.QGridLayout() # main_layout = overall layout of whole window
         
         w = pg.QtWidgets.QWidget()
         main_layout.addWidget(w)
 
-        main_layout.setRowStretch(0, 3)
-        # main_layout.setRowStretch(1, 3)
+        # main_layout.setRowStretch(0, 2)
+        # main_layout.setRowStretch(1, 2)
         
-        self.grid = layout = pg.QtWidgets.QGridLayout()
-        layout.setColumnStretch(0, 5)
-        layout.setColumnStretch(1, 5)
+        self.grid = layout = pg.QtWidgets.QGridLayout() # layout = sublayout excluding buttons at the top
+        # layout.setColumnStretch(0, 6)
+        # layout.setColumnStretch(1, 2)
+        # layout.setRowStretch(0, 1)
+        # layout.setRowStretch(1, 10)
         w.setLayout(layout)
         
         # Main image view
@@ -281,7 +304,7 @@ class ScanView(fv.FileView):
         iv1.ui.roiBtn.hide()
         # Hide the Menu button
         iv1.ui.menuBtn.hide()
-        layout.addWidget(iv1, 0, 0, 2, 1)
+        layout.addWidget(iv1, 0, 0, 1, 1)
         line_v = pg.InfiniteLine(pos = 0, angle=90, movable=True)
         line_h = pg.InfiniteLine(pos = 0, angle=0, movable=True)
         crosshair = pg.TargetItem(symbol = '+', pen='b', movable=False)
@@ -304,25 +327,83 @@ class ScanView(fv.FileView):
         iv2.setColorMap(pg.colormap.get('afmhot', source = 'matplotlib'))
         iv2.getView().setYLink(iv1.getView())
         iv2.getView().setXLink(iv1.getView())
-        layout.addWidget(iv2, 0, 1, 2, 1) # adds to row 1, col 0
+        layout.addWidget(iv2, 0, 1, 1, 1) # adds to row 1, col 0
         
         # Adding buttons and inputs to row 1 col 0
-        tree = QTreeWidget()
-        layout.addWidget(1, 0, 1, 1)
-        item = QTreeWidgetItem(tree)
-        # Overlay mask button
+        # tree = QTreeWidget()
+        # layout.addWidget(tree, 1, 0, 1, 1)
+        # item = QTreeWidgetItem(tree)
+        # # Overlay mask button
         # widget_button = QWidget()
         # layout_button = QHBoxLayout()
-        # widget.setLayout(layout)
+        # widget_button.setLayout(layout_button)
+        # mask_button = QPushButton("Overlay Mask")
+        # mask_button.clicked.connect(self.overlay_mask)
+        # layout_button.addWidget(mask_button)
+        # tree.setItemWidget(item, 1, widget_button)
+        # # Number inputs
+        # mask_input_keys = [['Mask x-stretch', 1.0], ['Mask y-stretch', 1.0],
+        #                    ['Mask x-position', 0.0], ['Mask y-position', 0.0]]
+        # mask_inputs = [pzp.param.spinbox(self, key[0], init)(None) for (key, init) in mask_input_keys]
+        # for i, (input_widget, (key, init)) in enumerate(zip(mask_inputs, mask_input_keys)):
+        #     self.params[key] = input_widget
+        #     tree.setItemWidget(item, i + 2, self.params[key])
+
+        #Create mask overlay title for row 1 col 0
+        title_row = QHBoxLayout()
+        mask_title = QLabel("Mask Overlay and Adjustment")
+        title_row.addWidget(mask_title, alignment = Qt.AlignCenter)
+        # mask_title.setAlignment(Qt.AlignCenter)
+
+        # Create mask button
         mask_button = QPushButton("Overlay Mask")
         mask_button.clicked.connect(self.overlay_mask)
-        item.addWidget(mask_button)
-        # Number inputs
-        mask_input_keys = [['Mask x-stretch', 1.0], ['Mask y-stretch', 1.0],
-                           ['Mask x-position', 0.0], ['Mask y-position', 0.0]]
-        mask_inputs = [pzp.param.spinbox(self, key[0], init)(None) for (key, init) in mask_input_keys]
-        for i, (key, init) in enumerate(mask_input_keys):
-            tree.setItemWidget(item, i + 2, self.params[key])
+
+        # Create show mask checkbox
+        mask_check = CustomCheckBox()
+        mask_check.setChecked(False)
+        check_label = QLabel("Show Mask")
+        check_row = QHBoxLayout()
+        check_row.addWidget(check_label)
+        check_row.addWidget(mask_check)
+
+        # Connections to rest of code
+        self.params["Show Mask"] = mask_check
+        mask_check.stateChanged.connect(self.show_mask)
+
+        #Create a layout for title, button and spinboxes
+        mask_layout = QVBoxLayout()
+        mask_layout.addLayout(title_row)
+        mask_layout.addWidget(mask_button)
+        mask_layout.addLayout(check_row)
+
+        # Create float number input boxes
+        labels = ['Mask x-stretch', 'Mask y-stretch', 'Mask x-position', 'Mask y-position']
+        inits = [1.1, 1.36, 0.10, 0.32]
+        bounds_lst = [(0.5, 1.5), (0.5, 1.5), (-1.0, 1.0), (-1.0, 1.0)]
+        
+        for key, init, bounds in zip(labels, inits, bounds_lst):
+            # Create label
+            label = QLabel(key)
+
+            #Create input box
+            input = QDoubleSpinBox(value = init, maximum = bounds[1], minimum = bounds[0], singleStep = 0.01, decimals = 2)
+
+            # Create horizontal layout for each row
+            row_layout = QHBoxLayout()
+            row_layout.addWidget(label)
+            row_layout.addWidget(input)
+
+            # Add row layout to vertical mask layout
+            mask_layout.addLayout(row_layout)
+
+            # Manage connections to rest of the code
+            input.valueChanged.connect(self.update_mask)
+            self.params[key] = input
+        
+        # Add mask layout to grid sublayout
+        layout.addLayout(mask_layout, 1, 0)
+        
         
         self.iv3 = iv3 = pg.ImageView()
         # Hide the ROI button
@@ -330,13 +411,13 @@ class ScanView(fv.FileView):
         # Hide the Menu button
         iv3.ui.menuBtn.hide()
         iv3.setColorMap(pg.colormap.get('afmhot', source = 'matplotlib'))
-        iv3.getView().setYLink(iv1.getView())
-        iv3.getView().setXLink(iv1.getView())
+        # iv3.getView().setYLink(iv1.getView())
+        # iv3.getView().setXLink(iv1.getView())
         layout.addWidget(iv3, 1, 1, 1, 1) # adds to row 1, col 0
         
-        # Connect all mask controls
-        for mask_input in mask_inputs:
-            mask_input.changed.connect(self.adjust_mask)
+        # # Connect all mask controls
+        # for mask_input in mask_inputs:
+        #     mask_input.changed.connect(self.transform_mask)
 
         # Connect clone target
         iv2.scene.sigMouseMoved.connect(self.move_clone_target)
@@ -365,93 +446,159 @@ class ScanView(fv.FileView):
         # Rotate images
         self.rot_image()
 
+
     def rot_image(self):
         """Rotate AFM and MFM images"""
-        height, width = self.img_AFM.shape[:2]
-        center = (int(width/2), int(height/2))
+        # height, width = self.img_AFM.shape[:2]
+        # center = (int(width/2), int(height/2))
 
-        # Define rotation matrix
-        rot_matrix = getRotationMatrix2D(center, self.params["Rotation"].value, 1)
+        # # Define rotation matrix
+        # rot_matrix = getRotationMatrix2D(center, self.params["Rotation"].value, 1)
 
-        # Rotate images according to rotation matrix
-        self.rot_AFM = warpAffine(self.img_AFM, rot_matrix,(height, width))
-        self.rot_MFM = warpAffine(self.img_MFM, rot_matrix,(height, width))
+        # # Rotate images according to rotation matrix
+        # self.rot_AFM = warpAffine(self.img_AFM, rot_matrix,(height, width))
+        # self.rot_MFM = warpAffine(self.img_MFM, rot_matrix,(height, width))
+
+        self.rot_AFM = rotation_helper(self.img_AFM, self.params["Rotation"].value)
+        self.rot_MFM = rotation_helper(self.img_MFM, self.params["Rotation"].value)
 
         # Update images in GUI
         self.iv1.setImage(self.rot_AFM.T)
         self.iv2.setImage(self.rot_MFM.T)
-        self.iv3.setImage(self.rot_MFM.T)
-    
+        # self.iv3.setImage(self.rot_MFM.T)
+        image3 = pg.ImageItem(self.rot_MFM.T)
+        self.iv3.addItem(image3)
+
     def overlay_mask(self):
         options = QFileDialog.Options()
         filePath, _ = QFileDialog.getOpenFileName(self, "Select File", "",
                                                       "All Files (*);;Text Files (*.txt)", options=options)
         if filePath:
+            # Remove previous mask if one exists
+            if self.mask is not None:
+                self.iv3.removeItem(self.mask_item)
+            
+            # Load new mask
             mask = iio.imread(filePath)
 
             # Correct for DMD stretching
             zoom_factors = (1, 0.5, 1) if mask.ndim == 3 else (1, 0.5)
-            self.mask = zoom(mask.T, zoom_factors, order = 3)
+            self.mask = zoom(mask.T, zoom_factors, order = 3)[450:690, 336:576] #For 60X: [96:816, 210:930]
 
-            self.transformed_mask = self.transform_mask()
-            self.mask_item = pg.ImageItem(self.mask)
-            self.mask_item.setOpacity(0.5)
-            self.iv3.setImage(self.mask_item)
+            # Add mask to image view 3
+            self.update_mask()
 
-    def transform_mask(self):
+            # Make sure the Show Mask checkbox is set to True
+            self.params["Show Mask"].setValue(True) 
+
+    def _transform_mask(self):
         """
         Transforms the given 2D numpy array by shifting and stretching it.
         """
+        # Get the shape of the original image
+        original_shape = self.mask.shape
+        
+        # Create the transformation matrix for scaling (stretching)
+        # scale_matrix = np.array([
+        #     [1/self.params['Mask x-stretch'].value, 0, 0],
+        #     [0, 1/self.params['Mask y-stretch'].value, 0],
+        #     [0, 0, 1]
+        # ])
+        # print(type(self.params['Mask x-stretch'].value()), self.params['Mask x-stretch'].value())
+        scale_matrix = np.array([[1/self.params['Mask x-stretch'].value(), 0],
+                                [0, 1/self.params['Mask y-stretch'].value()]])
+
+        # Create the offset for shifting
+        offset = np.array([self.params['Mask x-position'].value() * 0.5 * original_shape[0],
+                        self.params['Mask y-position'].value() * 0.5 * original_shape[1]])
+        
+        # Apply the affine transformation
+        transformed_mask = affine_transform(self.mask, scale_matrix[:2, :2], offset=offset, output_shape=original_shape, order=1, mode='constant', cval=0.0)
+        
+        # Crop the image to the original size (if necessary)
+        # transformed_mask = transformed_image[:original_shape[0], :original_shape[1]]
+        rot_mask = rotation_helper(transformed_mask, self.params["Rotation"].value)
+
+        scaled_rot_mask = resize(rot_mask, dsize = self.rot_MFM.shape[:2], interpolation = INTER_CUBIC)
+
+        return scaled_rot_mask
+        
+        # self.iv3.removeItem(self.mask_item)
+        # self.mask_item = pg.ImageItem(self.transformed_mask)
+        # self.mask_item.setOpacity(0.5)
+        # self.iv3.setImage(self.mask_item)
+
+    def update_mask(self):
         if self.mask is not None:
-            # Get the shape of the original image
-            original_shape = self.mask.shape
-            
-            # Create the transformation matrix for scaling (stretching)
-            # scale_matrix = np.array([
-            #     [1/self.params['Mask x-stretch'].value, 0, 0],
-            #     [0, 1/self.params['Mask y-stretch'].value, 0],
-            #     [0, 0, 1]
-            # ])
-            scale_matrix = np.array([[1/self.params['Mask x-stretch'].value, 0],
-                                    [0, 1/self.params['Mask y-stretch'].value]])
+            transformed_mask = self._transform_mask()
 
-            view_x, view_y = 
+            # Remove existing mask
+            if self.mask_item is not None:
+                self.iv3.removeItem(self.mask_item)
 
-            
-            # Create the offset for shifting
-            offset = np.array([self.params['Mask x-position'].value * 0.5 * view_x,
-                            self.params['Mask y-position'].value * 0.5 * view_y])
-            
-            # Apply the affine transformation
-            transformed_image = affine_transform(image, scale_matrix[:2, :2], offset=offset, output_shape=original_shape, order=1, mode='constant', cval=0.0)
-            
-            # Crop the image to the original size (if necessary)
-            transformed_image = transformed_image[:original_shape[0], :original_shape[1]]
-            
-            self.iv3.removeItem(self.mask_item)
+            # Add new mask
+            self.mask_item = pg.ImageItem(transformed_mask)
+            self.mask_item.setOpacity(0.5)
+            self.iv3.addItem(self.mask_item) # ERRORS HERE 
 
-
-    def image_view_link(self):
-        """ 
-        This method manages the implementation of the ' link' checkbox.
-        Either axes are linked or only MFM scrolls with the MFM view shown as a rectangular ROI in the AFM plot
-        """
-
-        viewbox2 = self.iv2.getView()
-        viewbox1 = self.iv1.getView() # change these
-        if self.params['AFM/MFM axis link'].value == True:
-            viewbox2.setYLink(viewbox1)
-            viewbox2.setXLink(viewbox1)
-            if self.mfm_view is not None:
-                viewbox1.removeItem(self.mfm_view)
+            # NOTE: easier/simpler way to do this?
 
         else:
-            viewbox2.setYLink(None)
-            viewbox2.setXLink(None)
-            viewbox1.autoRange()
-            xrange, yrange = viewbox2.viewRange()
-            self.updateMFMView()
-            self.iv2.getView().sigRangeChanged.connect(self.updateMFMView)
+            self.params['Latest error'].set_value("Initialise mask first")
+    
+
+    def show_mask(self):
+        """
+        Manages toggling between displaying and hiding mask in bottom right AFM image.
+        If this is the first time calling the function (ie if self.mask is None), opens a file dialog window to load mask.
+        """
+        if self.mask is not None:
+            if self.params["Show Mask"].value:
+                self.mask_item.setOpacity(0.5)
+            else:
+                self.mask_item.setOpacity(0)
+        else:
+            self.params["Latest error"].set_value("Initialise mask first")
+        # elif self.params["Overlay mask"].value:
+        #     # self.params["Latest error"].set_value("Initialise mask first")
+        #     options = QFileDialog.Options()
+        #     filePath, _ = QFileDialog.getOpenFileName(self, "Select File", "",
+        #                                                 "All Files (*);;Text Files (*.txt)", options=options)
+        #     if filePath:
+        #         mask = iio.imread(filePath)
+
+        #         # Correct for DMD stretching
+        #         zoom_factors = (1, 0.5, 1) if mask.ndim == 3 else (1, 0.5)
+        #         self.mask = zoom(mask.T, zoom_factors, order = 3)
+
+        #         self.transformed_mask = self.transform_mask()
+        #         self.mask_item = pg.ImageItem(self.transformed_mask)
+        #         self.mask_item.setOpacity(0.5)
+        #         self.iv3.setImage(self.mask_item)
+        #         # self.params["Overlay mask"].set_value(True)
+
+
+    # def image_view_link(self):
+    #     """ 
+    #     This method manages the implementation of the ' link' checkbox.
+    #     Either axes are linked or only MFM scrolls with the MFM view shown as a rectangular ROI in the AFM plot
+    #     """
+
+    #     viewbox2 = self.iv2.getView()
+    #     viewbox1 = self.iv1.getView() # change these
+    #     if self.params['AFM/MFM axis link'].value == True:
+    #         viewbox2.setYLink(viewbox1)
+    #         viewbox2.setXLink(viewbox1)
+    #         if self.mfm_view is not None:
+    #             viewbox1.removeItem(self.mfm_view)
+
+    #     else:
+    #         viewbox2.setYLink(None)
+    #         viewbox2.setXLink(None)
+    #         viewbox1.autoRange()
+    #         xrange, yrange = viewbox2.viewRange()
+    #         self.updateMFMView()
+    #         self.iv2.getView().sigRangeChanged.connect(self.updateMFMView)
 
     def updateMFMView(self):
         """ 
@@ -600,7 +747,6 @@ class ScanView(fv.FileView):
                 
                 mfm_view.addItem(circle)
             self.vertices.append(row_vertices)
-
 
     def show_vertices(self):
         """
