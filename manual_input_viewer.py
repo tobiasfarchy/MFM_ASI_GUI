@@ -52,7 +52,7 @@ def rotation_helper(img, rot):
     rot_matrix = getRotationMatrix2D(center, rot, 1)
 
     # Rotate images according to rotation matrix
-    rot_img = warpAffine(img, rot_matrix, dsize = (height, width))
+    rot_img = warpAffine(img, rot_matrix, dsize = (width, height)) #switched width and height to fix cropping issues
 
     return rot_img
 
@@ -809,7 +809,7 @@ class ScanView(fv.FileView):
             ax.bar(x, vrtx_unwritten, width, label = 'Unwritten states', color = 'g')
             ax.bar([p + width for p in x], thermal_freq, width, label = 'Thermal model', color = 'red')
 
-            ax.set_xlabel('Vortex Type')
+            ax.set_xlabel('Energy')
             ax.set_ylabel('Frequency')
             ax.set_xticks([p + width/2 for p in x])
             ax.set_xticklabels(state_labels)
