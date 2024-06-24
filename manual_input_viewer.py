@@ -16,7 +16,7 @@ import pyqtgraph as pg
 from functools import partial as fpartial
 from cv2 import getRotationMatrix2D, warpAffine, resize, INTER_CUBIC
 from scipy.signal import find_peaks
-from PyQt5.QtWidgets import QApplication, QFileDialog, QGraphicsEllipseItem, QDoubleSpinBox, QTreeWidgetItem, QTreeWidget, QPushButton, QWidget, QHBoxLayout, QLabel, QVBoxLayout, QCheckBox
+from PyQt5.QtWidgets import QApplication, QFileDialog, QGraphicsEllipseItem, QDoubleSpinBox, QComboBox, QTreeWidget, QPushButton, QWidget, QHBoxLayout, QLabel, QVBoxLayout, QCheckBox
 from PyQt5.QtGui import QBrush, QColor, QPainter, QPen
 from PyQt5.QtCore import QRectF, Qt
 from MFM_read_toolkit import square_lattice_bars
@@ -85,6 +85,15 @@ class CustomCheckBox(QCheckBox):
         self.setCheckState(value)
         self.value = value
 
+class CustomCombo(QComboBox):
+    def __init__(self, item_list):
+        super(QComboBox, self).__init__()
+        for item in item_list:
+            self.addItem(item)
+    
+    def value(self):
+        return self.currentIndex()
+    
 class ScanView(fv.FileView):
     def define_params(self):
         rot = pzp.param.spinbox(self, "Rotation", 0.0)(None)
@@ -325,6 +334,10 @@ class ScanView(fv.FileView):
         title_row.addWidget(mask_title, alignment = Qt.AlignCenter)
         # mask_title.setAlignment(Qt.AlignCenter)
 
+        #Magnification selection dropdown menu
+        mag_combo = CustomCombo(["20x", "60x"])
+        self.params["Mask mag"] = mag_combo
+
         # Create mask button
         mask_button = QPushButton("Overlay Mask")
         mask_button.clicked.connect(self.overlay_mask)
@@ -447,17 +460,21 @@ class ScanView(fv.FileView):
         options = QFileDialog.Options()
         filePath, _ = QFileDialog.getOpenFileName(self, "Select File", "",
                                                       "All Files (*);;Text Files (*.txt)", options=options)
-        if filePath:
+        if filePath and self.params["Mask_mag"] != -1:
             # Remove previous mask if one exists
             if self.mask is not None:
                 self.iv3.removeItem(self.mask_item)
             
             # Load new mask
-            mask = iio.imread(filePath)
+            mask = 255 - iio.imread(filePath)
 
             # Correct for DMD stretching
             zoom_factors = (1, 0.5, 1) if mask.ndim == 3 else (1, 0.5)
-            self.mask = zoom(mask.T, zoom_factors, order = 3)[450:690, 336:576] #For 60X: [96:816, 210:930]
+            if self.params["Mask_mag"].value == 0: # 20x mag
+                dim0, dim1 = (450,690), (336,576)
+            else: # 60x mag
+                dim0, dim1 = (96,816), (210,930)
+            self.mask = zoom(mask.T, zoom_factors, order = 3)[dim0[0]:dim0[1], dim1[0]:dim1[1]]
 
             # Add mask to image view 3
             self.update_mask()
